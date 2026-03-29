@@ -49,8 +49,13 @@ def save(d):
         json.dump(d, f, ensure_ascii=False, indent=2)
 
 def get_ip():
+    # On Railway use the public domain
+    railway = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '')
+    if railway:
+        return railway
     try:
         s = socket.socket()
+        s.settimeout(1)
         s.connect(('8.8.8.8', 80))
         ip = s.getsockname()[0]
         s.close()
