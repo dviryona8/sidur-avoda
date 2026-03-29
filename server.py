@@ -4,7 +4,7 @@
 מחולל סידור עבודה — שרת אינטרנט (multi-team)
 """
 
-import os, sys, json, socket, threading, webbrowser
+import os, sys, json, socket, threading, webbrowser, hashlib, time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote_plus, quote_plus
 from datetime import datetime, timedelta
@@ -48,7 +48,7 @@ def save_all(d):
 
 def load_team(team):
     return load_all().get('teams', {}).get(team,
-           {'week_start': '', 'preferences': '', 'submissions': {}})
+           {'week_start': '', 'preferences': '', 'submissions': {}, 'shift_mode': '3x8'})
 
 def save_team(team, tdata):
     d = load_all()
@@ -189,15 +189,27 @@ function createTeam(){
 # ══════════════════════════════════════════════════════════════
 # EMPLOYEE FORM
 # ══════════════════════════════════════════════════════════════
-def employee_page(name_hint, wk, team):
+def employee_page(name_hint, wk, team, shift_mode='3x8'):
     wlabel   = week_label(wk)
     dates    = week_dates_json(wk)
     subtitle = ('שבוע: ' + wlabel) if wlabel else 'מלא/י את הזמינות שלך לשבוע הקרוב'
     team_tag = (' | צוות: ' + team) if team else ''
 
+    # Select shifts and hours based on shift_mode
+    if shift_mode == '2x12':
+        shifts = ['בוקר', 'לילה']
+        hrs = {'בוקר': '06:00–18:00', 'לילה': '18:00–06:00'}
+        min_all = 6
+        min_night = 2
+    else:  # '3x8' default
+        shifts = ['בוקר', 'צהריים', 'לילה']
+        hrs = {'בוקר': '06:00–14:00', 'צהריים': '14:00–22:00', 'לילה': '22:00–06:00'}
+        min_all = 10
+        min_night = 2
+
     days_json   = json.dumps(DAYS,   ensure_ascii=False)
-    shifts_json = json.dumps(SHIFTS, ensure_ascii=False)
-    hrs_json    = json.dumps(HRS,    ensure_ascii=False)
+    shifts_json = json.dumps(shifts, ensure_ascii=False)
+    hrs_json    = json.dumps(hrs,    ensure_ascii=False)
     dates_json  = json.dumps(dates,  ensure_ascii=False)
     wknd_list   = json.dumps(list(WEEKEND), ensure_ascii=False)
     team_js     = json.dumps(team, ensure_ascii=False)
@@ -254,6 +266,13 @@ textarea{min-height:80px;resize:vertical}
 .success p{color:var(--gray);margin-top:8px;font-size:14px}
 .btn-again{display:inline-block;margin-top:20px;padding:10px 24px;background:var(--blue);
            color:white;border:none;border-radius:8px;font-size:14px;cursor:pointer;font-family:inherit}
+@media(max-width:600px){
+  .card{padding:14px 10px}
+  .hdr h1{font-size:17px}
+  .cb-wrap input[type=checkbox]{width:24px;height:24px}
+  .btn-sub{min-height:56px;font-size:15px}
+  input[type=text],textarea{font-size:16px}
+}
 </style></head>
 <body>
 <div class="hdr">
@@ -267,7 +286,7 @@ textarea{min-height:80px;resize:vertical}
            placeholder="שם פרטי + משפחה" oninput="validate()">
   </div>
   <label>&#128197; בחר/י את המשמרות שאת/ה יכול/ה לעבוד
-    <span class="hint">(לפחות ''' + str(MIN_ALL) + ''' משמרות)</span></label>
+    <span class="hint">(לפחות ''' + str(min_all) + ''' משמרות)</span></label>
   <div class="grid-wrap">
     <table class="sg" id="grid">
       <thead id="grid-head"></thead>
@@ -276,9 +295,9 @@ textarea{min-height:80px;resize:vertical}
   </div>
   <div class="vbar">
     <div class="vi"><span id="ico-t" class="ico-err">&#10007;</span>
-      <span>סה"כ: <span class="badge err" id="b-t">0</span>/''' + str(MIN_ALL) + '''+</span></div>
+      <span>סה"כ: <span class="badge err" id="b-t">0</span>/''' + str(min_all) + '''+</span></div>
     <div class="vi"><span id="ico-n" class="ico-err">&#10007;</span>
-      <span>לילה: <span class="badge err" id="b-n">0</span>/''' + str(MIN_NIGHT) + '''+</span></div>
+      <span>לילה: <span class="badge err" id="b-n">0</span>/''' + str(min_night) + '''+</span></div>
     <div class="vi"><span id="ico-w" class="ico-err">&#10007;</span>
       <span>סופ"ש: <span class="badge err" id="b-w">0</span>/''' + str(MIN_WKND) + '''+
         <span class="hint">&nbsp;(ש"ו–ש"ב)</span></span></div>
@@ -328,8 +347,8 @@ function validate(){
     const ic=document.getElementById(iid);
     ic.textContent=ok?'\u2713':'\u2717';ic.className=ok?'ico-ok':'ico-err';return ok;
   }
-  const t=upd('b-t','ico-t',total,''' + str(MIN_ALL) + ''');
-  const n=upd('b-n','ico-n',nights,''' + str(MIN_NIGHT) + ''');
+  const t=upd('b-t','ico-t',total,''' + str(min_all) + ''');
+  const n=upd('b-n','ico-n',nights,''' + str(min_night) + ''');
   const w=upd('b-w','ico-w',wknds,''' + str(MIN_WKND) + ''');
   document.getElementById('sub-btn').disabled=!(t&&n&&w&&name.length>1);
 }
@@ -359,6 +378,8 @@ def admin_page(team, data, flash=''):
     subs  = data.get('submissions', {})
     wk    = data.get('week_start', '')
     prefs = data.get('preferences', '')
+    shift_mode = data.get('shift_mode', '3x8')
+    admin_password = data.get('admin_password', '')
     base  = get_public_base()
     wl    = week_label(wk)
     emp_link = base + '/form?team=' + quote_plus(team)
@@ -443,11 +464,14 @@ body{font-family:"Segoe UI",Arial,sans-serif;background:#edf2f7;color:#2d3748;di
 .card h2{font-size:15px;margin-bottom:14px;color:#2d3748;
          border-bottom:1px solid #e2e8f0;padding-bottom:8px}
 label{font-size:13px;font-weight:600;margin-bottom:5px;display:block}
-input[type=date],input[type=text],textarea{
+input[type=date],input[type=text],input[type=password],textarea{
   width:100%;padding:9px 11px;border:1.5px solid #e2e8f0;border-radius:7px;
   font-size:13px;font-family:inherit;direction:rtl}
 input:focus,textarea:focus{outline:none;border-color:#2b6cb0}
 textarea{min-height:75px;resize:vertical}
+.radio-group{margin-bottom:12px}
+.radio-group label{display:flex;align-items:center;font-weight:500;margin-bottom:8px}
+.radio-group input[type=radio]{margin-left:8px;cursor:pointer}
 .btn{display:inline-block;padding:9px 20px;border:none;border-radius:7px;
      font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;
      text-decoration:none;transition:.15s}
@@ -490,6 +514,21 @@ tr:hover td{background:#f7fafc}
         <textarea name="preferences"
           placeholder="דביר יונה: מעדיף לילה&#10;שרה כהן: מעדיפה בוקר">''' + prefs + '''</textarea>
       </div>
+    </div>
+    <div style="margin-top:12px">
+      <label style="margin-bottom:8px">סוג משמרות</label>
+      <div class="radio-group">
+        <label><input type="radio" name="shift_mode" value="3x8" ''' + ('checked' if shift_mode == '3x8' else '') + '''>
+          &#128203; 3 משמרות (8 שעות) – בוקר, צהריים, לילה</label>
+      </div>
+      <div class="radio-group">
+        <label><input type="radio" name="shift_mode" value="2x12" ''' + ('checked' if shift_mode == '2x12' else '') + '''>
+          &#128203; 2 משמרות (12 שעות) – בוקר, לילה</label>
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <label>סיסמת מנהל (השאר ריק ללא סיסמה)</label>
+      <input type="password" name="admin_password" value="''' + admin_password + '''" placeholder="(אופציונלי)">
     </div>
     <div style="margin-top:12px;display:flex;align-items:center;gap:12px">
       <button type="submit" class="btn btn-blue">&#128190; שמור הגדרות</button>
@@ -570,6 +609,21 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get('Content-Length', 0))
         return self.rfile.read(n)
 
+    def set_cookie(self, name, value, max_age=86400):
+        """Set a cookie with specified name, value, and max_age (in seconds)."""
+        self.send_header('Set-Cookie', f'{name}={value}; Path=/; Max-Age={max_age}; HttpOnly')
+
+    def get_cookie(self, name):
+        """Get a cookie value from request headers."""
+        cookies = self.headers.get('Cookie', '')
+        for part in cookies.split(';'):
+            part = part.strip()
+            if '=' in part:
+                k, v = part.split('=', 1)
+                if k.strip() == name:
+                    return v.strip()
+        return None
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path   = parsed.path.rstrip('/')
@@ -584,13 +638,48 @@ class Handler(BaseHTTPRequestHandler):
                 self.redirect('/'); return
             name = unquote_plus(qs.get('name', [''])[0])
             data = load_team(team)
-            self.send_html(employee_page(name, data.get('week_start', ''), team))
+            shift_mode = data.get('shift_mode', '3x8')
+            self.send_html(employee_page(name, data.get('week_start', ''), team, shift_mode))
 
         elif path == '/admin':
             if not team:
                 self.redirect('/'); return
+            data = load_team(team)
+            admin_password = data.get('admin_password', '')
+            # Check password if set
+            if admin_password:
+                cookie_val = self.get_cookie(f'admin_{team}')
+                hashed_pwd = hashlib.md5(admin_password.encode()).hexdigest()
+                if cookie_val != hashed_pwd:
+                    # Show password form
+                    html = '''<!DOCTYPE html>
+<html dir="rtl" lang="he"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>כניסה למנהל</title>
+<style>
+body{font-family:"Segoe UI",Arial,sans-serif;background:#edf2f7;display:flex;align-items:center;
+     justify-content:center;min-height:100vh;padding:20px}
+.card{background:white;border-radius:14px;padding:40px 30px;max-width:400px;
+      box-shadow:0 2px 12px rgba(0,0,0,.1);text-align:center}
+h2{color:#1a365d;margin-bottom:20px;font-size:20px}
+input[type=password]{width:100%;padding:12px 14px;border:1.5px solid #e2e8f0;
+  border-radius:8px;font-size:14px;margin-bottom:16px;font-family:inherit;direction:rtl}
+input:focus{outline:none;border-color:#2b6cb0}
+.btn{width:100%;padding:12px;background:#2b6cb0;color:white;border:none;border-radius:8px;
+     font-size:14px;font-weight:700;cursor:pointer;font-family:inherit}
+.btn:hover{background:#2c5282}
+</style></head>
+<body><div class="card">
+<h2>🔐 כניסה למנהל</h2>
+<form method="POST" action="/admin/login?team=''' + quote_plus(team) + '''">
+  <input type="password" name="password" placeholder="הזן סיסמה" required autofocus>
+  <button type="submit" class="btn">&#10132; כניסה</button>
+</form>
+</div></body></html>'''
+                    self.send_html(html)
+                    return
             flash = unquote_plus(qs.get('msg', [''])[0])
-            self.send_html(admin_page(team, load_team(team), flash))
+            self.send_html(admin_page(team, data, flash))
 
         elif path.startswith('/admin/delete/'):
             name = unquote_plus(path[len('/admin/delete/'):])
@@ -605,6 +694,7 @@ class Handler(BaseHTTPRequestHandler):
             data = load_team(team)
             wk   = data.get('week_start', '')
             subs = data.get('submissions', {})
+            shift_mode = data.get('shift_mode', '3x8')
             if not wk or not PDF_OK:
                 self.redirect('/admin?team=' + quote_plus(team) + '&msg=שגיאה+—+הגדר+תאריך'); return
             # convert ISO date (2026-03-29) to expected format (29.03.2026)
@@ -614,12 +704,15 @@ class Handler(BaseHTTPRequestHandler):
                 wk_fmt = wk
             avail = {n: sub_to_avail(s) for n, s in subs.items()}
             prefs = parse_preferences(data.get('preferences', ''))
-            sched, hrs, nh = auto_schedule(avail, prefs)
+            sched, hrs, nh = auto_schedule(avail, prefs, shift_mode=shift_mode)
+            # Store last generated schedule
+            data['last_schedule'] = sched
+            save_team(team, data)
             team_safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in team)
             out_m = '/tmp/mgr_{}.pdf'.format(team_safe)
             out_e = '/tmp/emp_{}.pdf'.format(team_safe)
-            make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_m, mode='manager')
-            make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_e, mode='employee')
+            make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_m, mode='manager', shift_mode=shift_mode)
+            make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_e, mode='employee', shift_mode=shift_mode)
             self.redirect('/admin/downloads?team=' + quote_plus(team))
 
         elif path == '/admin/downloads':
@@ -691,12 +784,32 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
             except Exception as e:
                 self.send_json({'ok': False, 'error': str(e)}, 500)
 
+        elif path == '/admin/login':
+            try:
+                params = parse_qs(body.decode('utf-8'))
+                password = params.get('password', [''])[0]
+                if not team: self.redirect('/'); return
+                data = load_team(team)
+                admin_password = data.get('admin_password', '')
+                if password == admin_password:
+                    hashed = hashlib.md5(admin_password.encode()).hexdigest()
+                    self.send_response(302)
+                    self.set_cookie(f'admin_{team}', hashed, max_age=86400)
+                    self.send_header('Location', f'/admin?team={quote_plus(team)}')
+                    self.end_headers()
+                else:
+                    self.send_html('<h2 style="color:red;text-align:center">סיסמה שגויה</h2><a href="/admin?team=' + quote_plus(team) + '">חזרה</a>', 403)
+            except Exception:
+                self.send_html('<h2 style="color:red;text-align:center">שגיאה</h2>', 500)
+
         elif path == '/admin/setup':
             params = parse_qs(body.decode('utf-8'))
             if not team: self.redirect('/'); return
             data = load_team(team)
             data['week_start']  = params.get('week_start', [''])[0]
             data['preferences'] = params.get('preferences', [''])[0]
+            data['shift_mode']  = params.get('shift_mode', ['3x8'])[0]
+            data['admin_password'] = params.get('admin_password', [''])[0]
             save_team(team, data)
             self.redirect('/admin?team=' + quote_plus(team))
 
@@ -716,7 +829,15 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
                 d = load_all()
                 if name in d.get('teams', {}):
                     self.send_json({'ok': False, 'error': 'צוות כבר קיים'}); return
-                d.setdefault('teams', {})[name] = {'week_start': '', 'preferences': '', 'submissions': {}}
+                d.setdefault('teams', {})[name] = {
+                    'week_start': '',
+                    'preferences': '',
+                    'submissions': {},
+                    'shift_mode': '3x8',
+                    'admin_password': '',
+                    'last_schedule': {},
+                    'manual_schedule': {}
+                }
                 save_all(d)
                 self.send_json({'ok': True})
             except Exception as e:

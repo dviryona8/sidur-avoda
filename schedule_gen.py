@@ -111,12 +111,26 @@ def parse_preferences(text: str) -> dict:
 #   1. Night shifts distributed as evenly as possible
 #   2. Preference weighting applied
 #   3. General fairness (total hours) for day shifts
+#   4. No double shifts in 24h (no 2 shifts same day)
+#   5. Night-to-morning gap constraint (8h min)
 # ─────────────────────────────────────────────
-def auto_schedule(avail: dict, prefs: dict = None) -> tuple:
+def auto_schedule(avail: dict, prefs: dict = None, shift_mode='3x8') -> tuple:
     prefs     = prefs or {}
-    sched     = {d: {s: None for s in SHIFTS} for d in DAYS}
+
+    # Choose shifts and hours based on mode
+    if shift_mode == '2x12':
+        shifts = ['בוקר', 'לילה']
+        shift_hrs_map = {'בוקר': 12, 'לילה': 12}
+        day_shifts = ['בוקר', 'לילה']
+    else:  # '3x8' default
+        shifts = ['בוקר', 'צהריים', 'לילה']
+        shift_hrs_map = {'בוקר': 8, 'צהריים': 8, 'לילה': 8}
+        day_shifts = ['בוקר', 'צהריים', 'לילה']
+
+    sched     = {d: {s: None for s in shifts} for d in DAYS}
     hours     = {emp: 0 for emp in avail}
     night_hrs = {emp: 0 for emp in avail}
+    emp_assignments = {emp: [] for emp in avail}  # Track (day, shift) assignments per employee
 
     # How many night shifts is each employee available for (capacity)?
     night_cap = {
@@ -139,18 +153,40 @@ def auto_schedule(avail: dict, prefs: dict = None) -> tuple:
             # so their nights remain available
             return (hours[emp] / emp_boost) * (night_boost ** 0.4)
 
-    # ── Assign nights first (fairness), then morning, then afternoon
-    for shift in ['לילה', 'בוקר', 'צהריים']:
+    def can_assign(emp, day, shift):
+        """Check if employee can be assigned this shift without violating constraints."""
+        # Constraint 1: Employee must be available for this shift
+        if shift not in avail[emp].get(day, []):
+            return False
+
+        # Constraint 2: No double shifts on same day (only one shift per day)
+        if any(d == day for d, s in emp_assignments[emp]):
+            return False
+
+        # Constraint 3: Night-to-morning gap constraint
+        # If employee works night on day X, cannot work בוקר on day X+1
+        if shift == 'בוקר':
+            day_idx = DAYS.index(day)
+            if day_idx > 0:
+                prev_day = DAYS[day_idx - 1]
+                if (prev_day, 'לילה') in emp_assignments[emp]:
+                    return False
+
+        return True
+
+    # ── Assign shifts in order: nights first, then others
+    for shift in ['לילה'] + [s for s in day_shifts if s != 'לילה']:
         for d in DAYS:
-            candidates = [e for e, a in avail.items() if shift in a.get(d, [])]
+            candidates = [e for e in avail if can_assign(e, d, shift)]
             if not candidates:
                 continue
             candidates.sort(key=lambda e: sort_key(e, shift))
             chosen = candidates[0]
             sched[d][shift] = chosen
-            hours[chosen] += 8
+            hours[chosen] += shift_hrs_map[shift]
+            emp_assignments[chosen].append((d, shift))
             if shift == 'לילה':
-                night_hrs[chosen] += 8
+                night_hrs[chosen] += shift_hrs_map[shift]
 
     return sched, hours, night_hrs
 
@@ -168,7 +204,15 @@ def fmt_date(d) -> str:
 # ─────────────────────────────────────────────
 # PDF GENERATOR
 # ─────────────────────────────────────────────
-def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager'):
+def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', shift_mode='3x8'):
+    # Determine shifts and hours based on mode
+    if shift_mode == '2x12':
+        SHIFTS_LOCAL = ['בוקר', 'לילה']
+        SHIFT_HRS_LOCAL = {'בוקר': '06:00-18:00', 'לילה': '18:00-06:00'}
+    else:  # '3x8' default
+        SHIFTS_LOCAL = ['בוקר', 'צהריים', 'לילה']
+        SHIFT_HRS_LOCAL = {'בוקר': '06:00-14:00', 'צהריים': '14:00-22:00', 'לילה': '22:00-06:00'}
+
     PW, PH = landscape(A4)
     c = canvas.Canvas(output, pagesize=landscape(A4))
     MX, MY = 1.0*cm, 0.65*cm
@@ -248,7 +292,7 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager'):
     # ════════════════════════════════════════
     # SHIFT ROWS — colored by shift type, not day
     # ════════════════════════════════════════
-    for shift in SHIFTS:
+    for shift in SHIFTS_LOCAL:
         ry = y - SHIFT_H
         bg_light = SH_LIGHT[shift]
 
@@ -258,7 +302,7 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager'):
         c.setFillColor(WHITE); c.setFont(FONT_B, 10)
         c.drawCentredString(MX+LBL_W/2, ry+SHIFT_H*0.62, H(shift))
         c.setFont(FONT, 8)
-        c.drawCentredString(MX+LBL_W/2, ry+SHIFT_H*0.25, SHIFT_HRS[shift])
+        c.drawCentredString(MX+LBL_W/2, ry+SHIFT_H*0.25, SHIFT_HRS_LOCAL[shift])
 
         for di, day in enumerate(DAYS):
             x   = MX + LBL_W + di*DAY_W
@@ -313,7 +357,7 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager'):
     for emp in sorted(avail.keys()):
         ry         = y - AV_ROW_H
         total_h    = hrs.get(emp, 0)
-        n_nights   = night_hrs.get(emp, 0) // 8
+        n_nights   = night_hrs.get(emp, 0) // (12 if shift_mode == '2x12' else 8)
         emp_prefs  = prefs.get(emp, {})
 
         # Name + stats cell
@@ -329,7 +373,7 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager'):
 
         # Preference tag if any
         if emp_prefs:
-            pref_shifts = [s for s in SHIFTS if emp_prefs.get(s, 1) > 1]
+            pref_shifts = [s for s in SHIFTS_LOCAL if emp_prefs.get(s, 1) > 1]
             tag = 'מעדיף: ' + ', '.join(pref_shifts)
             c.setFillColor(PREF_CLR); c.setFont(FONT, 5.5)
             tag_x = MX + LBL_W - 0.15*cm
@@ -345,8 +389,8 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager'):
 
             if day_shifts:
                 dot_r  = AV_ROW_H * 0.26
-                slot_w = DAY_W / 3
-                for si, sh in enumerate(SHIFTS):
+                slot_w = DAY_W / len(SHIFTS_LOCAL)
+                for si, sh in enumerate(SHIFTS_LOCAL):
                     if sh not in day_shifts:
                         continue
                     cx  = x + slot_w*(si+0.5)
@@ -359,7 +403,8 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager'):
                         c.circle(cx, cy, dot_r, fill=0, stroke=1)
                         c.setLineWidth(0.5)
                     c.setFillColor(WHITE); c.setFont(FONT, 5)
-                    c.drawCentredString(cx, cy-1.5, SHIFT_SH[sh])
+                    shift_ch = {'בוקר':'ב','צהריים':'צ','לילה':'ל'}.get(sh, '?')
+                    c.drawCentredString(cx, cy-1.5, shift_ch)
         y = ry
 
     # ════════════════════════════════════════
@@ -368,7 +413,7 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager'):
     y -= 0.3*cm
     bar_h   = 0.45*cm
     bar_y   = y - bar_h
-    max_n   = max((night_hrs[e]//8 for e in avail), default=1)
+    max_n   = max((night_hrs[e]//(12 if shift_mode == '2x12' else 8) for e in avail), default=1)
     bar_tw  = TW * 0.55
     bar_x   = MX
 
@@ -378,7 +423,7 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager'):
 
     emp_col_w = bar_tw / max(len(avail), 1)
     for ei, emp in enumerate(sorted(avail.keys())):
-        n = night_hrs.get(emp, 0) // 8
+        n = night_hrs.get(emp, 0) // (12 if shift_mode == '2x12' else 8)
         ex = bar_x + ei * emp_col_w
         # bar background
         c.setFillColor(colors.HexColor('#ebf8ff'))
@@ -397,11 +442,12 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager'):
     # ════════════════════════════════════════
     lx = MX
     ly = MY + 0.25*cm
-    for sh in SHIFTS:
+    for sh in SHIFTS_LOCAL:
         c.setFillColor(SH_MED[sh])
         c.circle(lx+0.12*cm, ly+0.08*cm, 0.09*cm, fill=1, stroke=0)
         c.setFillColor(GRAY_TXT); c.setFont(FONT, 7)
-        c.drawString(lx+0.27*cm, ly+0.03*cm, H(f'{SHIFT_SH[sh]} = {sh}  {SHIFT_HRS[sh]}'))
+        shift_ch = {'בוקר':'ב','צהריים':'צ','לילה':'ל'}.get(sh, '?')
+        c.drawString(lx+0.27*cm, ly+0.03*cm, H(f'{shift_ch} = {sh}  {SHIFT_HRS_LOCAL[sh]}'))
         lx += 4.0*cm
 
     c.setFillColor(GRAY_TXT); c.setFont(FONT, 6.5)
@@ -441,10 +487,10 @@ OUT_EMP  = f'{BASE_DIR}/\u05e1\u05d9\u05d3\u05d5\u05e8_\u05e2\u05d1\u05d5\u05d3\
 if __name__ == '__main__':
     avail          = parse(MESSAGES)
     prefs          = parse_preferences(PREFERENCES)
-    sched, hrs, nh = auto_schedule(avail, prefs)
+    sched, hrs, nh = auto_schedule(avail, prefs, shift_mode='3x8')
 
-    make_pdf(sched, avail, hrs, nh, prefs, WEEK, OUT_MGR, mode='manager')
-    make_pdf(sched, avail, hrs, nh, prefs, WEEK, OUT_EMP, mode='employee')
+    make_pdf(sched, avail, hrs, nh, prefs, WEEK, OUT_MGR, mode='manager', shift_mode='3x8')
+    make_pdf(sched, avail, hrs, nh, prefs, WEEK, OUT_EMP, mode='employee', shift_mode='3x8')
 
     print(f'✓  PDF מנהל    →  {OUT_MGR}')
     print(f'✓  PDF עובדים  →  {OUT_EMP}\n')
