@@ -615,16 +615,18 @@ class Handler(BaseHTTPRequestHandler):
             avail = {n: sub_to_avail(s) for n, s in subs.items()}
             prefs = parse_preferences(data.get('preferences', ''))
             sched, hrs, nh = auto_schedule(avail, prefs)
-            out_m = '/tmp/סידור_מנהל_{}.pdf'.format(team)
-            out_e = '/tmp/סידור_עובדים_{}.pdf'.format(team)
+            team_safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in team)
+            out_m = '/tmp/mgr_{}.pdf'.format(team_safe)
+            out_e = '/tmp/emp_{}.pdf'.format(team_safe)
             make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_m, mode='manager')
             make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_e, mode='employee')
             self.redirect('/admin/downloads?team=' + quote_plus(team))
 
         elif path == '/admin/downloads':
             if not team: self.redirect('/'); return
-            m_ok = os.path.exists('/tmp/סידור_מנהל_{}.pdf'.format(team))
-            e_ok = os.path.exists('/tmp/סידור_עובדים_{}.pdf'.format(team))
+            team_safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in team)
+            m_ok = os.path.exists('/tmp/mgr_{}.pdf'.format(team_safe))
+            e_ok = os.path.exists('/tmp/emp_{}.pdf'.format(team_safe))
             html = ('''<!DOCTYPE html><html dir="rtl" lang="he"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>הורדת קבצים</title>
@@ -637,21 +639,21 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
      font-size:15px;font-weight:700;cursor:pointer;text-decoration:none;font-family:inherit}
 .btn-blue{background:#2b6cb0;color:white}.btn-green{background:#276749;color:white}
 .btn-back{background:#e2e8f0;color:#2d3748;margin-top:20px}</style></head>
-<body><div class="card"><div style="font-size:52px">📄</div>
-<h2>הסידור נוצר בהצלחה!</h2><p>לחץ/י להורדה:</p>'''
-+ (f'<a href="/download/manager?team={quote_plus(team)}" class="btn btn-blue">⬇ סידור מנהל</a>' if m_ok else '')
-+ (f'<a href="/download/employee?team={quote_plus(team)}" class="btn btn-green">⬇ סידור עובדים</a>' if e_ok else '')
-+ f'<a href="/admin?team={quote_plus(team)}" class="btn btn-back">← חזרה לניהול</a>'
+<body><div class="card"><div style="font-size:52px">&#128196;</div>
+<h2>&#9989; הסידור נוצר בהצלחה!</h2><p>לחץ/י להורדה:</p>'''
++ (f'<a href="/download/manager?team={quote_plus(team)}" class="btn btn-blue">&#8659; סידור מנהל</a>' if m_ok else '')
++ (f'<a href="/download/employee?team={quote_plus(team)}" class="btn btn-green">&#8659; סידור עובדים</a>' if e_ok else '')
++ f'<a href="/admin?team={quote_plus(team)}" class="btn btn-back">&#8592; חזרה לניהול</a>'
 + '</div></body></html>')
             self.send_html(html)
 
         elif path == '/download/manager':
-            fname = '/tmp/סידור_מנהל_{}.pdf'.format(team)
-            self._send_file(fname, 'סידור_מנהל_{}.pdf'.format(team))
+            team_safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in team)
+            self._send_file('/tmp/mgr_{}.pdf'.format(team_safe), 'sidur_menahel.pdf')
 
         elif path == '/download/employee':
-            fname = '/tmp/סידור_עובדים_{}.pdf'.format(team)
-            self._send_file(fname, 'סידור_עובדים_{}.pdf'.format(team))
+            team_safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in team)
+            self._send_file('/tmp/emp_{}.pdf'.format(team_safe), 'sidur_ovdim.pdf')
 
         else:
             self.send_html('<h1 style="font-family:sans-serif">404</h1>', 404)
