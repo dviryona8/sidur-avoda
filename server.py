@@ -130,19 +130,18 @@ body{font-family:"Segoe UI",Arial,sans-serif;background:linear-gradient(135deg,#
 .card{background:white;border-radius:18px;padding:30px 28px;box-shadow:0 8px 32px rgba(0,0,0,.2)}
 h2{font-size:16px;color:#2d3748;margin-bottom:18px;text-align:center}
 label{display:block;font-size:13px;font-weight:600;color:#4a5568;margin-bottom:6px}
-select,input[type=text]{width:100%;padding:11px 13px;border:1.5px solid #e2e8f0;border-radius:9px;
-  font-size:14px;font-family:inherit;direction:rtl;margin-bottom:16px;color:#2d3748}
+select,input[type=text],input[type=password]{width:100%;padding:11px 13px;
+  border:1.5px solid #e2e8f0;border-radius:9px;
+  font-size:14px;font-family:inherit;direction:rtl;margin-bottom:12px;color:#2d3748}
 select:focus,input:focus{outline:none;border-color:#2b6cb0}
-.btns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
 .btn{padding:13px;border:none;border-radius:10px;font-size:14px;font-weight:700;
-     cursor:pointer;font-family:inherit;transition:.15s}
+     cursor:pointer;font-family:inherit;transition:.15s;width:100%}
 .btn-mgr{background:#1a365d;color:white} .btn-mgr:hover{background:#2c5282}
 .btn-emp{background:#276749;color:white} .btn-emp:hover{background:#22543d}
-.divider{border:none;border-top:1px solid #e2e8f0;margin:22px 0}
-.btn-new{width:100%;padding:11px;background:#f7fafc;border:1.5px solid #e2e8f0;
-         border-radius:9px;font-size:13px;font-weight:600;color:#4a5568;cursor:pointer;
-         font-family:inherit;margin-top:12px}
-.btn-new:hover{background:#edf2f7}
+.btn-new{background:#276749;color:white} .btn-new:hover{background:#22543d}
+.divider{border:none;border-top:1px solid #e2e8f0;margin:20px 0}
+.err-msg{background:#fed7d7;color:#c53030;padding:8px 12px;border-radius:7px;
+         font-size:13px;margin-bottom:12px;display:none}
 </style></head>
 <body><div class="wrap">
 <div class="logo">
@@ -157,24 +156,33 @@ select:focus,input:focus{outline:none;border-color:#2b6cb0}
     <option value="">-- בחר צוות --</option>
     ''' + teams_opts + '''
   </select>
-  <button type="button" class="btn btn-emp" style="width:100%" onclick="goEmp()">&#10132; כניסה</button>
+  <button type="button" class="btn btn-emp" onclick="goEmp()">&#10132; כניסה</button>
 </div>
 
 <!-- מנהל -->
-<div class="card">
-  <h2>&#9881;&#65039; כניסת מנהל</h2>
-  <label>בחר/י צוות קיים</label>
+<div class="card" style="margin-bottom:16px">
+  <h2>&#9881;&#65039; כניסת מנהל קיים</h2>
+  <label>בחר/י צוות</label>
   <select id="team-mgr">
     <option value="">-- בחר צוות --</option>
     ''' + teams_opts + '''
   </select>
-  <button type="button" class="btn btn-mgr" style="width:100%;margin-bottom:18px" onclick="goMgr()">&#10132; כניסה לניהול</button>
+  <button type="button" class="btn btn-mgr" onclick="goMgr()">&#10132; כניסה לניהול</button>
+</div>
 
-  <hr class="divider" style="margin:0 0 18px">
-
-  <label>&#10133; או צור צוות חדש</label>
-  <input type="text" id="new-team" placeholder="לדוגמה: אקליפטוס, רוז, מנהלים...">
-  <button class="btn-new" onclick="createTeam()">&#10133; צור צוות חדש</button>
+<!-- צוות חדש -->
+<div class="card">
+  <h2>&#10133; צור צוות חדש</h2>
+  <div class="err-msg" id="new-err"></div>
+  <form id="new-form" onsubmit="return createTeam(event)">
+    <label>שם הצוות</label>
+    <input type="text" id="new-team" name="team" placeholder="לדוגמה: אקליפטוס, רוז, מנהלים..." required>
+    <label>סיסמת מנהל</label>
+    <input type="password" id="new-pwd" name="password" placeholder="לפחות 4 תווים" minlength="4" required>
+    <label>אמת סיסמה</label>
+    <input type="password" id="new-pwd2" name="password2" placeholder="הזן שוב את הסיסמה" required>
+    <button type="submit" class="btn btn-new">&#10133; צור צוות וכנס</button>
+  </form>
 </div>
 </div>
 <script>
@@ -188,15 +196,27 @@ function goMgr(){
   if(!t){alert('בחר/י צוות תחילה');return;}
   window.location.href='/admin?team='+encodeURIComponent(t);
 }
-function createTeam(){
+function createTeam(e){
+  e.preventDefault();
   const name=document.getElementById('new-team').value.trim();
-  if(!name){alert('הזן/י שם צוות');return;}
-  fetch('/create-team',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({team:name})})
-  .then(r=>r.json()).then(r=>{
-    if(r.ok) window.location.href='/admin?team='+encodeURIComponent(name);
-    else alert('שגיאה: '+r.error);
-  });
+  const pwd=document.getElementById('new-pwd').value;
+  const pwd2=document.getElementById('new-pwd2').value;
+  const err=document.getElementById('new-err');
+  if(!name){showErr('הזן/י שם צוות');return false;}
+  if(pwd.length<4){showErr('הסיסמה חייבת להיות לפחות 4 תווים');return false;}
+  if(pwd!==pwd2){showErr('הסיסמאות אינן תואמות');return false;}
+  function showErr(msg){err.textContent='✗ '+msg;err.style.display='block';}
+  fetch('/create-team',{method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'team='+encodeURIComponent(name)+'&password='+encodeURIComponent(pwd)+'&password2='+encodeURIComponent(pwd2),
+    redirect:'follow'
+  }).then(r=>{
+    if(r.ok && r.url && r.url.includes('/admin')){window.location.href=r.url;}
+    else return r.text().then(t=>{
+      const m=t.match(/שגיאה[^<]*/);showErr(m?m[0]:'שגיאה ביצירת הצוות');
+    });
+  }).catch(()=>showErr('שגיאת חיבור'));
+  return false;
 }
 </script>
 </body></html>'''
@@ -623,18 +643,32 @@ tr:hover td{background:#f7fafc}
 <div class="con">
 ''' + flash_html + '''
 
-<!-- שלב 1: תאריך שבוע -->
+<!-- שלב 1: תאריך שבוע + סוג משמרות -->
 <div class="card">
-  <div class="card-title"><span class="step-num">1</span> בחר תאריכי שבוע</div>
+  <div class="card-title"><span class="step-num">1</span> הגדרות שבוע</div>
   <form method="POST" action="/admin/setup?team=''' + quote_plus(team) + '''">
-    <label>יום ראשון של השבוע</label>
-    <input type="date" name="week_start" value="''' + wk + '''" required style="max-width:220px">
-    <input type="hidden" name="preferences" value="''' + prefs.replace('"','&quot;') + '''">
-    <input type="hidden" name="shift_mode" value="''' + shift_mode + '''">
-    <input type="hidden" name="admin_password" value="''' + admin_password.replace('"','&quot;') + '''">
-    <div style="margin-top:12px">
-      <button type="submit" class="btn btn-blue">&#128190; שמור תאריך</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px">
+      <div>
+        <label>יום ראשון של השבוע</label>
+        <input type="date" name="week_start" value="''' + wk + '''" required>
+      </div>
+      <div>
+        <label>סוג משמרות</label>
+        <div style="padding:10px 0;display:flex;flex-direction:column;gap:8px">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:500;cursor:pointer">
+            <input type="radio" name="shift_mode" value="3x8" ''' + ('checked' if shift_mode == '3x8' else '') + ''' style="margin:0;cursor:pointer">
+            &#128303; 3×8 שעות (בוקר, צהריים, לילה)
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-weight:500;cursor:pointer">
+            <input type="radio" name="shift_mode" value="2x12" ''' + ('checked' if shift_mode == '2x12' else '') + ''' style="margin:0;cursor:pointer">
+            &#128303; 2×12 שעות (בוקר, לילה)
+          </label>
+        </div>
+      </div>
     </div>
+    <input type="hidden" name="preferences" value="''' + prefs.replace('"','&quot;') + '''">
+    <input type="hidden" name="admin_password" value="''' + admin_password.replace('"','&quot;') + '''">
+    <button type="submit" class="btn btn-blue" style="max-width:200px">&#128190; שמור הגדרות</button>
   </form>
   ''' + week_display + '''
 </div>
@@ -690,15 +724,7 @@ tr:hover td{background:#f7fafc}
     <div class="card-title">&#9881;&#65039; הגדרות נוספות</div>
     <form method="POST" action="/admin/setup?team=''' + quote_plus(team) + '''">
       <input type="hidden" name="week_start" value="''' + wk + '''">
-      <div style="margin-bottom:14px">
-        <label>סוג משמרות</label>
-        <div class="radio-group">
-          <label><input type="radio" name="shift_mode" value="3x8" ''' + ('checked' if shift_mode == '3x8' else '') + '''>
-            3 משמרות של 8 שעות (בוקר, צהריים, לילה)</label>
-          <label><input type="radio" name="shift_mode" value="2x12" ''' + ('checked' if shift_mode == '2x12' else '') + '''>
-            2 משמרות של 12 שעות (בוקר, לילה)</label>
-        </div>
-      </div>
+      <input type="hidden" name="shift_mode" value="''' + shift_mode + '''">
       <div style="margin-bottom:14px">
         <label>העדפות עובדים <span style="font-weight:400;color:#718096">(אופציונלי)</span></label>
         <textarea name="preferences"
@@ -1183,27 +1209,44 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
 
         elif path == '/create-team':
             try:
-                form = json.loads(body.decode('utf-8'))
-                name = form.get('team', '').strip()
+                ct = self.headers.get('Content-Type', '')
+                if 'json' in ct:
+                    form = json.loads(body.decode('utf-8'))
+                    name = form.get('team', '').strip()
+                    password = form.get('password', '')
+                else:
+                    params = parse_qs(body.decode('utf-8'))
+                    name = params.get('team', [''])[0].strip()
+                    password = params.get('password', [''])[0]
+                    password2 = params.get('password2', [''])[0]
+                    if password != password2:
+                        self.send_html('<h2 style="color:red;text-align:center;font-family:sans-serif">שגיאה: הסיסמאות אינן תואמות</h2>', 400); return
                 if not name:
-                    self.send_json({'ok': False, 'error': 'שם ריק'}); return
+                    self.send_html('<h2 style="color:red;text-align:center;font-family:sans-serif">שגיאה: שם ריק</h2>', 400); return
+                if len(password) < 4:
+                    self.send_html('<h2 style="color:red;text-align:center;font-family:sans-serif">שגיאה: סיסמה קצרה מדי</h2>', 400); return
                 d = load_all()
                 if name in d.get('teams', {}):
-                    self.send_json({'ok': False, 'error': 'צוות כבר קיים'}); return
+                    self.send_html('<h2 style="color:red;text-align:center;font-family:sans-serif">שגיאה: צוות כבר קיים</h2>', 400); return
                 d.setdefault('teams', {})[name] = {
                     'week_start': '',
                     'preferences': '',
                     'submissions': {},
                     'shift_mode': '3x8',
-                    'admin_password': '',
+                    'admin_password': password,
                     'last_schedule': {},
                     'last_hrs': {},
                     'last_nh': {}
                 }
                 save_all(d)
-                self.send_json({'ok': True})
+                # Set auth cookie and redirect to admin
+                hashed = hashlib.md5(password.encode()).hexdigest()
+                self.send_response(302)
+                self.set_cookie(cookie_name(name), hashed, max_age=86400 * 7)
+                self.send_header('Location', '/admin?team=' + quote_plus(name))
+                self.end_headers()
             except Exception as e:
-                self.send_json({'ok': False, 'error': str(e)})
+                self.send_html('<h2 style="color:red;text-align:center;font-family:sans-serif">שגיאה: ' + str(e) + '</h2>', 500)
 
         else:
             self.send_html('<h1>404</h1>', 404)
