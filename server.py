@@ -648,7 +648,7 @@ class Handler(BaseHTTPRequestHandler):
             admin_password = data.get('admin_password', '')
             # Check password if set
             if admin_password:
-                cookie_val = self.get_cookie(f'admin_{team}')
+                cookie_val = self.get_cookie('admin_' + hashlib.md5(team.encode()).hexdigest()[:8])
                 hashed_pwd = hashlib.md5(admin_password.encode()).hexdigest()
                 if cookie_val != hashed_pwd:
                     # Show password form
@@ -794,7 +794,7 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
                 if password == admin_password:
                     hashed = hashlib.md5(admin_password.encode()).hexdigest()
                     self.send_response(302)
-                    self.set_cookie(f'admin_{team}', hashed, max_age=86400)
+                    self.set_cookie('admin_' + hashlib.md5(team.encode()).hexdigest()[:8], hashed, max_age=86400)
                     self.send_header('Location', f'/admin?team={quote_plus(team)}')
                     self.end_headers()
                 else:
