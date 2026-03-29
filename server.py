@@ -134,35 +134,44 @@ select:focus,input:focus{outline:none;border-color:#2b6cb0}
   <h1>&#128203; מערכת סידור עבודה</h1>
   <p>בחר/י צוות וסוג כניסה</p>
 </div>
+<!-- עובד -->
+<div class="card" style="margin-bottom:16px">
+  <h2>&#128203; כניסת עובד</h2>
+  <label>בחר/י צוות</label>
+  <select id="team-emp" required>
+    <option value="">-- בחר צוות --</option>
+    ''' + teams_opts + '''
+  </select>
+  <button type="button" class="btn btn-emp" style="width:100%" onclick="goEmp()">&#10132; כניסה</button>
+</div>
+
+<!-- מנהל -->
 <div class="card">
-  <h2>&#128101; כניסה לצוות קיים</h2>
-  <form id="main-form">
-    <label>בחר/י צוות</label>
-    <select id="team-sel" required>
-      <option value="">-- בחר צוות --</option>
-      ''' + teams_opts + '''
-    </select>
-    <div class="btns">
-      <button type="button" class="btn btn-mgr" onclick="go('admin')">&#9881; כניסת מנהל</button>
-      <button type="button" class="btn btn-emp" onclick="go('form')">&#128203; כניסת עובד</button>
-    </div>
-  </form>
+  <h2>&#9881;&#65039; כניסת מנהל</h2>
+  <label>בחר/י צוות קיים</label>
+  <select id="team-mgr">
+    <option value="">-- בחר צוות --</option>
+    ''' + teams_opts + '''
+  </select>
+  <button type="button" class="btn btn-mgr" style="width:100%;margin-bottom:18px" onclick="goMgr()">&#10132; כניסה לניהול</button>
 
-  <hr class="divider">
+  <hr class="divider" style="margin:0 0 18px">
 
-  <div class="new-team">
-    <label>&#10133; צוות חדש (הזן שם)</label>
-    <input type="text" id="new-team" placeholder="לדוגמה: אקליפטוס, רוז, מנהלים...">
-    <button class="btn-new" onclick="createTeam()">&#10133; צור צוות חדש</button>
-  </div>
+  <label>&#10133; או צור צוות חדש</label>
+  <input type="text" id="new-team" placeholder="לדוגמה: אקליפטוס, רוז, מנהלים...">
+  <button class="btn-new" onclick="createTeam()">&#10133; צור צוות חדש</button>
 </div>
 </div>
 <script>
-function go(role){
-  const t=document.getElementById('team-sel').value;
+function goEmp(){
+  const t=document.getElementById('team-emp').value;
   if(!t){alert('בחר/י צוות תחילה');return;}
-  const path=role==='admin'?'/admin':'/form';
-  window.location.href=path+'?team='+encodeURIComponent(t);
+  window.location.href='/form?team='+encodeURIComponent(t);
+}
+function goMgr(){
+  const t=document.getElementById('team-mgr').value;
+  if(!t){alert('בחר/י צוות תחילה');return;}
+  window.location.href='/admin?team='+encodeURIComponent(t);
 }
 function createTeam(){
   const name=document.getElementById('new-team').value.trim();
@@ -598,13 +607,18 @@ class Handler(BaseHTTPRequestHandler):
             subs = data.get('submissions', {})
             if not wk or not PDF_OK:
                 self.redirect('/admin?team=' + quote_plus(team) + '&msg=שגיאה+—+הגדר+תאריך'); return
+            # convert ISO date (2026-03-29) to expected format (29.03.2026)
+            try:
+                wk_fmt = datetime.strptime(wk, '%Y-%m-%d').strftime('%d.%m.%Y')
+            except Exception:
+                wk_fmt = wk
             avail = {n: sub_to_avail(s) for n, s in subs.items()}
             prefs = parse_preferences(data.get('preferences', ''))
             sched, hrs, nh = auto_schedule(avail, prefs)
             out_m = '/tmp/סידור_מנהל_{}.pdf'.format(team)
             out_e = '/tmp/סידור_עובדים_{}.pdf'.format(team)
-            make_pdf(sched, avail, hrs, nh, prefs, wk, out_m, mode='manager')
-            make_pdf(sched, avail, hrs, nh, prefs, wk, out_e, mode='employee')
+            make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_m, mode='manager')
+            make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_e, mode='employee')
             self.redirect('/admin/downloads?team=' + quote_plus(team))
 
         elif path == '/admin/downloads':
