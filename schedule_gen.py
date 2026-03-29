@@ -22,7 +22,10 @@ from reportlab.pdfbase.ttfonts import TTFont
 # FONT SETUP
 # ─────────────────────────────────────────────
 FONT = FONT_B = 'Helvetica'
+_BASE = os.path.dirname(os.path.abspath(__file__))
 for fp, fn in [
+    (os.path.join(_BASE, 'DejaVuSans.ttf'),      'DV'),
+    (os.path.join(_BASE, 'DejaVuSans-Bold.ttf'), 'DVB'),
     ('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',      'DV'),
     ('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 'DVB'),
 ]:
