@@ -1234,12 +1234,24 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
             if not self.check_admin_auth(team, data):
                 return
             new_week = params.get('week_start', [''])[0]
-            # If the week changed → clear previous submissions and schedule
-            if new_week and new_week != data.get('week_start', ''):
-                data['submissions']   = {}
-                data['last_schedule'] = {}
-                data['last_hrs']      = {}
-                data['day_modes']     = {}
+            old_week = data.get('week_start', '')
+            if new_week and new_week != old_week:
+                # Archive current week's data before switching
+                if old_week:
+                    data.setdefault('weeks', {})[old_week] = {
+                        'submissions':   data.get('submissions', {}),
+                        'last_schedule': data.get('last_schedule', {}),
+                        'last_hrs':      data.get('last_hrs', {}),
+                        'last_nh':       data.get('last_nh', {}),
+                        'day_modes':     data.get('day_modes', {}),
+                    }
+                # Load saved data for new week (or start fresh if never seen before)
+                wk_data = data.get('weeks', {}).get(new_week, {})
+                data['submissions']   = wk_data.get('submissions', {})
+                data['last_schedule'] = wk_data.get('last_schedule', {})
+                data['last_hrs']      = wk_data.get('last_hrs', {})
+                data['last_nh']       = wk_data.get('last_nh', {})
+                data['day_modes']     = wk_data.get('day_modes', {})
             data['week_start']  = new_week
             data['preferences'] = params.get('preferences', [''])[0]
             data['shift_mode']  = params.get('shift_mode', ['3x8'])[0]
