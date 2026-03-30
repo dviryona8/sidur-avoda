@@ -842,6 +842,10 @@ def schedule_edit_page(team, data):
             f'</div></td>'
         )
 
+    # ── Build datalist of all registered employees (shared) ──
+    dl_opts = ''.join(f'<option value="{e}">' for e in all_employees)
+    shared_dl = f'<datalist id="emp-dl">{dl_opts}</datalist>'
+
     # ── Build 3 shift rows (always all 3; noon hidden by JS for 2x12 days) ──
     table_rows = ''
     for sh in ['בוקר', 'צהריים', 'לילה']:
@@ -851,12 +855,9 @@ def schedule_edit_page(team, data):
         for i, day in enumerate(DAYS):
             current    = sched.get(day, {}).get(sh, '') or ''
             avail_emps = [e for e in all_employees if sh in avail_map.get(e, {}).get(day, [])]
-            opts = '<option value="">— לא שובץ —</option>'
-            for e in all_employees:
-                sel        = 'selected' if e == current else ''
-                avail_note = '' if e in avail_emps else ' ⚠'
-                opts += f'<option value="{e}" {sel}>{e}{avail_note}</option>'
-            field  = f'sched__{day}__{sh}'
+            # Warn if current value is a registered employee not available for this slot
+            warn = ' ⚠' if (current and current in all_employees and current not in avail_emps) else ''
+            field   = f'sched__{day}__{sh}'
             cell_id = f'cell_{i}_noon' if sh == 'צהריים' else ''
             id_attr = f' id="{cell_id}"' if cell_id else ''
             # Initial display: for 2x12 days use visibility:hidden (NOT display:none)
@@ -865,11 +866,17 @@ def schedule_edit_page(team, data):
                 vis_style = ';visibility:hidden;background:#e2e8f0'
             else:
                 vis_style = ''
-            cells += (f'<td{id_attr} style="padding:6px 4px;background:{bg};border:1px solid #e2e8f0{vis_style}">'
-                      f'<select name="{field}" '
-                      f'style="width:100%;padding:5px 4px;border:1.5px solid {border_col};'
-                      f'border-radius:6px;font-size:12px;font-family:inherit;direction:rtl;'
-                      f'background:white;cursor:pointer">{opts}</select></td>')
+            warn_title = 'title="עובד לא סימן זמינות למשמרת זו"' if warn else ''
+            cells += (
+                f'<td{id_attr} style="padding:6px 4px;background:{bg};border:1px solid #e2e8f0{vis_style}">'
+                f'<input type="text" name="{field}" value="{current}" list="emp-dl"'
+                f' placeholder="הקלד שם..." {warn_title}'
+                f' style="width:100%;padding:5px 6px;border:1.5px solid {border_col};'
+                f'border-radius:6px;font-size:12px;font-family:inherit;direction:rtl;'
+                f'background:white;box-sizing:border-box">'
+                + (f'<span style="font-size:10px;color:#c05621">{warn}</span>' if warn else '')
+                + f'</td>'
+            )
 
         # Row label – for בוקר/לילה show both possible hour ranges; noon shows 3x8 only
         if sh == 'בוקר':
@@ -917,6 +924,7 @@ table{border-collapse:collapse;min-width:780px;width:100%}
     <span style="margin-right:12px;color:#718096">⚠ = עובד לא סימן זמינות</span>
   </p>
   <form method="POST" action="/admin/schedule/save?team=''' + quote_plus(team) + '''">
+    ''' + shared_dl + '''
     <div class="tbl-wrap">
     <table>
       <thead>
