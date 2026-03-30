@@ -232,8 +232,9 @@ function createTeam(e){
     body:'team='+encodeURIComponent(name)+'&password='+encodeURIComponent(pwd)+'&password2='+encodeURIComponent(pwd2),
     redirect:'follow'
   }).then(r=>{
-    if(r.ok && r.url && r.url.includes('/admin')){window.location.href=r.url;}
-    else return r.text().then(t=>{
+    if(r.url && r.url.includes('/admin')){window.location.href=r.url;return;}
+    if(r.ok){window.location.href=r.url||'/';return;}
+    return r.text().then(t=>{
       const m=t.match(/שגיאה[^<]*/);showErr(m?m[0]:'שגיאה ביצירת הצוות');
     });
   }).catch(()=>showErr('שגיאת חיבור'));
@@ -1285,6 +1286,29 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
         elif path == '/download/employee':
             team_safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in team)
             self._send_file('/tmp/emp_{}.pdf'.format(team_safe), 'sidur_ovdim.pdf')
+
+        elif path == '/debug':
+            import traceback as tb_mod
+            info = []
+            info.append(f'BASE: {BASE}')
+            info.append(f'STORAGE: {STORAGE}')
+            info.append(f'DATA_F: {DATA_F}')
+            info.append(f'DATA_F exists: {os.path.exists(DATA_F)}')
+            info.append(f'BASE writable: {os.access(BASE, os.W_OK)}')
+            info.append(f'/tmp writable: {os.access("/tmp", os.W_OK)}')
+            info.append(f'PDF_OK: {PDF_OK}')
+            info.append(f'PORT: {PORT}')
+            info.append(f'RAILWAY_PUBLIC_DOMAIN: {os.environ.get("RAILWAY_PUBLIC_DOMAIN","(not set)")}')
+            try:
+                d = load_all()
+                teams = list(d.get('teams', {}).keys())
+                info.append(f'Teams: {teams}')
+                for t_name, t_data in d.get('teams', {}).items():
+                    info.append(f'  Team "{t_name}": keys={list(t_data.keys())}, subs={len(t_data.get("submissions",{}))}')
+            except Exception as e:
+                info.append(f'load_all ERROR: {e}')
+            html = '<html><body style="font-family:monospace;padding:20px;white-space:pre">' + '\n'.join(info) + '</body></html>'
+            self.send_html(html)
 
         else:
             self.send_html('<h1 style="font-family:sans-serif">404</h1>', 404)
