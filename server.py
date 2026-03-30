@@ -1239,29 +1239,29 @@ class Handler(BaseHTTPRequestHandler):
 
             prefs = parse_preferences(data.get('preferences', ''))
 
-            # Generate schedule per station with cross-station 24h constraint
+            # Generate schedule per station — pass cumulative assignments so
+            # an employee can't be double-booked across stations (24h constraint)
             station_schedules = {}
-            all_assigned = {}  # Track assignments globally for 24h constraint
+            all_assigned = {}  # {emp: [(day, shift), ...]} across all stations so far
 
             for station in stations:
                 station_subs = get_station_subs(data, station)
                 if not station_subs:
-                    # No submissions for this station, create empty schedule
                     station_schedules[station] = {d: {} for d in DAYS}
                     continue
 
                 avail = {n: sub_to_avail(s) for n, s in station_subs.items()}
-                sched, hrs, nh = auto_schedule(avail, prefs, shift_mode=shift_mode)
+                sched, hrs, nh = auto_schedule(
+                    avail, prefs, shift_mode=shift_mode,
+                    existing_assignments=all_assigned   # <-- cross-station constraint
+                )
                 station_schedules[station] = sched
 
-                # Track assignments for cross-station constraint
+                # Accumulate this station's assignments for the next station
                 for day in DAYS:
-                    for shift in sched[day]:
-                        emp = sched[day][shift]
+                    for shift, emp in sched[day].items():
                         if emp:
-                            if emp not in all_assigned:
-                                all_assigned[emp] = []
-                            all_assigned[emp].append((day, shift))
+                            all_assigned.setdefault(emp, []).append((day, shift))
 
             data['station_schedules'] = station_schedules
             # Backwards compat: set last_schedule to first station

@@ -114,8 +114,13 @@ def parse_preferences(text: str) -> dict:
 #   4. No double shifts in 24h (no 2 shifts same day)
 #   5. Night-to-morning gap constraint (8h min)
 # ─────────────────────────────────────────────
-def auto_schedule(avail: dict, prefs: dict = None, shift_mode='3x8') -> tuple:
+def auto_schedule(avail: dict, prefs: dict = None, shift_mode='3x8', existing_assignments=None) -> tuple:
+    """
+    existing_assignments: dict {emp_name: [(day, shift), ...]} of shifts already
+    assigned in OTHER stations. Used to enforce cross-station 24h constraints.
+    """
     prefs     = prefs or {}
+    existing_assignments = existing_assignments or {}
 
     # Choose shifts and hours based on mode
     if shift_mode == '2x12':
@@ -130,7 +135,8 @@ def auto_schedule(avail: dict, prefs: dict = None, shift_mode='3x8') -> tuple:
     sched     = {d: {s: None for s in shifts} for d in DAYS}
     hours     = {emp: 0 for emp in avail}
     night_hrs = {emp: 0 for emp in avail}
-    emp_assignments = {emp: [] for emp in avail}  # Track (day, shift) assignments per employee
+    # Seed with cross-station existing assignments so can_assign sees them
+    emp_assignments = {emp: list(existing_assignments.get(emp, [])) for emp in avail}
 
     # How many night shifts is each employee available for (capacity)?
     night_cap = {
@@ -163,14 +169,25 @@ def auto_schedule(avail: dict, prefs: dict = None, shift_mode='3x8') -> tuple:
         if any(d == day for d, s in emp_assignments[emp]):
             return False
 
-        # Constraint 3: Night-to-morning gap constraint
-        # If employee works night on day X, cannot work בוקר on day X+1
-        if shift == 'בוקר':
-            day_idx = DAYS.index(day)
-            if day_idx > 0:
-                prev_day = DAYS[day_idx - 1]
-                if (prev_day, 'לילה') in emp_assignments[emp]:
-                    return False
+        day_idx = DAYS.index(day)
+
+        # Constraint 3: After לילה (ends 06:00 next day), block בוקר AND צהריים
+        # on the next day (both start within 24h of the night shift start at 22:00)
+        if shift in ('בוקר', 'צהריים') and day_idx > 0:
+            prev_day = DAYS[day_idx - 1]
+            if (prev_day, 'לילה') in emp_assignments[emp]:
+                return False
+
+        # Constraint 4: Before לילה (starts 22:00), block if employee already worked
+        # a shift that day (handled by Constraint 2) OR will have worked בוקר/צהריים
+        # making the gap < 8h (same day → already blocked).
+
+        # Constraint 5: Cannot work לילה if working בוקר next day would be too close —
+        # proactively: if employee already assigned to בוקר on day+1, block לילה today
+        if shift == 'לילה' and day_idx < len(DAYS) - 1:
+            next_day = DAYS[day_idx + 1]
+            if any(d == next_day and s in ('בוקר', 'צהריים') for d, s in emp_assignments[emp]):
+                return False
 
         return True
 
