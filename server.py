@@ -1070,7 +1070,11 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.flush()
 
     def send_html(self, html, code=200):
-        enc = html.encode('utf-8')
+        try:
+            enc = html.encode('utf-8')
+        except UnicodeEncodeError:
+            # Lone surrogates (e.g. from malformed emoji) — replace with ?
+            enc = html.encode('utf-8', errors='replace')
         self.send_response(code)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(enc)))
@@ -1340,8 +1344,10 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
 
         if path == '/submit':
             try:
-                form   = json.loads(body.decode('utf-8'))
+                form   = json.loads(body.decode('utf-8', errors='replace'))
                 name   = form.get('name', '').strip()
+                # Sanitize name: remove lone surrogates (malformed emoji)
+                name = name.encode('utf-8', errors='replace').decode('utf-8')
                 if not name:
                     self.send_json({'ok': False, 'error': 'שם חסר'}, 400); return
                 if not team:
