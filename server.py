@@ -568,6 +568,7 @@ def admin_page(team, data, flash=''):
     base       = get_public_base()
     wl         = week_label(wk)
     stations   = get_stations(data)
+    emp_link   = base + '/form?team=' + quote_plus(team)
     last_sched = data.get('last_schedule', {})
 
     flash_html = ''
