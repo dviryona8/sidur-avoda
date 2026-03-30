@@ -306,7 +306,7 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
 
         for di, day in enumerate(DAYS):
             x   = MX + LBL_W + di*DAY_W
-            emp = sched[day][shift]
+            emp = sched[day].get(shift)   # .get() handles days with fewer shifts (mixed mode)
             bg  = MISS_BG if emp is None else bg_light
 
             c.setFillColor(bg)
@@ -395,7 +395,7 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
                         continue
                     cx  = x + slot_w*(si+0.5)
                     cy  = ry + AV_ROW_H*0.5
-                    assigned = (sched[day][sh] == emp)
+                    assigned = (sched[day].get(sh) == emp)
                     c.setFillColor(SH_MED[sh])
                     c.circle(cx, cy, dot_r, fill=1, stroke=0)
                     if assigned:
