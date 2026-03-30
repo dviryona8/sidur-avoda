@@ -61,12 +61,20 @@ def get_stations(data):
     return data.get('stations', ['עמדה 1']) or ['עמדה 1']
 
 def get_station_subs(data, station):
-    """Return submissions for a specific station (backwards compat)."""
-    stations = get_stations(data)
-    default_st = stations[0]
+    """Return submissions for a specific station.
+    Supports both old format (single 'station' string) and new ('stations' list)."""
+    all_stations = get_stations(data)
+    default_st = all_stations[0]
     subs = data.get('submissions', {})
-    return {n: s for n, s in subs.items()
-            if s.get('station', default_st) == station}
+    result = {}
+    for n, s in subs.items():
+        emp_stations = s.get('stations', None)
+        if emp_stations is None:
+            # Old format: single station string
+            emp_stations = [s.get('station', default_st)]
+        if station in emp_stations:
+            result[n] = s
+    return result
 
 def all_teams():
     return list(load_all().get('teams', {}).keys())
@@ -237,12 +245,12 @@ function createTeam(e){
 # ══════════════════════════════════════════════════════════════
 # EMPLOYEE FORM
 # ══════════════════════════════════════════════════════════════
-def employee_page(name_hint, wk, team, shift_mode='3x8', station=''):
+def employee_page(name_hint, wk, team, shift_mode='3x8', stations_list=None):
+    stations_list = stations_list or ['עמדה 1']
     wlabel   = week_label(wk)
     dates    = week_dates_json(wk)
     subtitle = ('שבוע: ' + wlabel) if wlabel else 'מלא/י את הזמינות שלך לשבוע הקרוב'
     team_tag = (' | צוות: ' + team) if team else ''
-    station_tag = (' | עמדה: ' + station) if station else ''
 
     if shift_mode == '2x12':
         shifts = ['בוקר', 'לילה']
@@ -255,12 +263,39 @@ def employee_page(name_hint, wk, team, shift_mode='3x8', station=''):
         min_all = 10
         min_night = 2
 
-    days_json   = json.dumps(DAYS,   ensure_ascii=False)
-    shifts_json = json.dumps(shifts, ensure_ascii=False)
-    hrs_json    = json.dumps(hrs,    ensure_ascii=False)
-    dates_json  = json.dumps(dates,  ensure_ascii=False)
-    wknd_list   = json.dumps(list(WEEKEND), ensure_ascii=False)
-    team_js     = json.dumps(team, ensure_ascii=False)
+    days_json      = json.dumps(DAYS,          ensure_ascii=False)
+    shifts_json    = json.dumps(shifts,        ensure_ascii=False)
+    hrs_json       = json.dumps(hrs,           ensure_ascii=False)
+    dates_json     = json.dumps(dates,         ensure_ascii=False)
+    wknd_list      = json.dumps(list(WEEKEND), ensure_ascii=False)
+    team_js        = json.dumps(team,          ensure_ascii=False)
+    stations_js    = json.dumps(stations_list, ensure_ascii=False)
+
+    # Build station checkboxes HTML (only shown if >1 station)
+    if len(stations_list) > 1:
+        st_checks = ''.join(
+            f'<label style="display:flex;align-items:center;gap:8px;font-weight:500;'
+            f'cursor:pointer;margin-bottom:6px">'
+            f'<input type="checkbox" class="st-cb" value="{s}" onchange="validate()" '
+            f'style="width:20px;height:20px;cursor:pointer;accent-color:#2b6cb0">'
+            f'{s}</label>'
+            for s in stations_list
+        )
+        station_section = (
+            '<div style="margin-bottom:18px;padding:14px 16px;background:#ebf8ff;'
+            'border:1.5px solid #90cdf4;border-radius:10px">'
+            '<label style="font-size:14px;font-weight:700;color:#1a365d;margin-bottom:10px">&#127970; באילו עמדות תוכל/י לעבוד?</label>'
+            + st_checks +
+            '<p id="st-err" style="color:#c53030;font-size:12px;margin-top:4px;display:none">יש לבחור עמדה אחת לפחות</p>'
+            '</div>'
+        )
+    else:
+        # Single station — auto-selected, no checkbox needed
+        station_section = (
+            f'<div style="margin-bottom:14px;padding:10px 14px;background:#f0fff4;'
+            f'border:1.5px solid #68d391;border-radius:8px;font-size:13px;color:#276749;font-weight:600">'
+            f'&#127970; עמדה: {stations_list[0]}</div>'
+        )
 
     return '''<!DOCTYPE html>
 <html dir="rtl" lang="he"><head>
@@ -326,7 +361,7 @@ textarea{min-height:80px;resize:vertical}
 <body>
 <div class="hdr">
   <h1>&#128203; טופס זמינות משמרות</h1>
-  <p>''' + subtitle + team_tag + station_tag + '''</p>
+  <p>''' + subtitle + team_tag + '''</p>
 </div>
 <div class="card" id="form-card">
   <div style="margin-bottom:16px">
@@ -334,6 +369,7 @@ textarea{min-height:80px;resize:vertical}
     <input type="text" id="emp-name" value="''' + name_hint + '''"
            placeholder="שם פרטי + משפחה" oninput="validate()">
   </div>
+  ''' + station_section + '''
   <label>&#128197; בחר/י את המשמרות שאת/ה יכול/ה לעבוד
     <span class="hint">(לפחות ''' + str(min_all) + ''' משמרות)</span></label>
   <div class="grid-wrap">
@@ -367,7 +403,7 @@ textarea{min-height:80px;resize:vertical}
 const DAYS=''' + days_json + ''';const SHFTS=''' + shifts_json + ''';
 const HRS=''' + hrs_json + ''';const DATES=''' + dates_json + ''';
 const WKND=new Set(''' + wknd_list + ''');const TEAM=''' + team_js + ''';
-const STATION=''' + json.dumps(station, ensure_ascii=False) + ''';
+const ALL_STATIONS=''' + stations_js + ''';
 const CLS={'\u05d1\u05d5\u05e7\u05e8':'cm','\u05e6\u05d4\u05e8\u05d9\u05d9\u05dd':'ca','\u05dc\u05d9\u05dc\u05d4':'cn'};
 const head=document.getElementById('grid-head');
 const body=document.getElementById('grid-body');
@@ -388,12 +424,22 @@ SHFTS.forEach(sh=>{
   });
   tr.innerHTML=cells;body.appendChild(tr);
 });
+function getSelectedStations(){
+  const cbs=document.querySelectorAll('.st-cb:checked');
+  if(cbs.length>0) return [...cbs].map(c=>c.value);
+  return ALL_STATIONS; // single station — auto-select all
+}
 function validate(){
   const cbs=[...document.querySelectorAll('#grid input:checked')];
   const total=cbs.length;
   const nights=cbs.filter(c=>c.dataset.shift==='\u05dc\u05d9\u05dc\u05d4').length;
   const wknds=cbs.filter(c=>WKND.has(c.dataset.day)).length;
   const name=document.getElementById('emp-name').value.trim();
+  // Station validation (only if multiple stations)
+  const stCbs=document.querySelectorAll('.st-cb');
+  const stOk=stCbs.length===0||[...stCbs].some(c=>c.checked);
+  const stErr=document.getElementById('st-err');
+  if(stErr) stErr.style.display=stOk?'none':'block';
   function upd(bid,iid,val,min){
     const ok=val>=min;const b=document.getElementById(bid);
     b.textContent=val;b.className='badge '+(ok?'ok':'err');
@@ -403,16 +449,17 @@ function validate(){
   const t=upd('b-t','ico-t',total,''' + str(min_all) + ''');
   const n=upd('b-n','ico-n',nights,''' + str(min_night) + ''');
   const w=upd('b-w','ico-w',wknds,''' + str(MIN_WKND) + ''');
-  document.getElementById('sub-btn').disabled=!(t&&n&&w&&name.length>1);
+  document.getElementById('sub-btn').disabled=!(t&&n&&w&&name.length>1&&stOk);
 }
 function doSubmit(){
   const name=document.getElementById('emp-name').value.trim();
   const notes=document.getElementById('notes').value.trim();
   const shifts={};
+  const selectedStations=getSelectedStations();
   document.querySelectorAll('#grid input[type=checkbox]').forEach(cb=>{shifts[cb.id]=cb.checked;});
-  fetch('/submit?team='+encodeURIComponent(TEAM)+'&station='+encodeURIComponent(STATION),{
+  fetch('/submit?team='+encodeURIComponent(TEAM),{
     method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name,shifts,notes,station:STATION})
+    body:JSON.stringify({name,shifts,notes,stations:selectedStations})
   }).then(r=>r.json()).then(r=>{
     if(r.ok){
       document.getElementById('form-card').style.display='none';
@@ -711,55 +758,57 @@ tr:hover td{background:#f7fafc}
   ''' + week_display + '''
 </div>
 
-<!-- שלב 2: לינקים לעובדים -->
+<!-- שלב 2: לינק לעובדים -->
 <div class="card">
-  <div class="card-title"><span class="step-num">2</span> שלח לינקים לעובדים</div>
-  <p style="font-size:13px;color:#718096;margin-bottom:14px">שלח/י לכל עובד את הלינק של העמדה שלו — הם ימלאו את הזמינות שלהם דרכו.</p>
-  ''' + ''.join(f'''
-  <div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #e2e8f0">
-    <div style="margin-bottom:8px"><strong>{st}</strong> <span style="color:#718096;font-size:12px">({sum(1 for n,s in subs.items() if s.get('station', get_stations(data)[0]) == st)} עובדים)</span></div>
-    <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:10px">
-      <input type="text" value="{base}/form?team={quote_plus(team)}&station={quote_plus(st)}"
-        readonly
-        style="flex:1;padding:11px 14px;border:1.5px solid #90cdf4;border-radius:9px;
-               font-size:13px;background:#ebf8ff;color:#2b6cb0;font-family:inherit;
-               direction:ltr;text-align:left;cursor:pointer"
-        onclick="this.select()">
-      <button onclick="copyToClipboard(this.previousElementSibling.value)"
-        style="padding:11px 18px;background:#2b6cb0;color:white;border:none;border-radius:9px;
-               font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;
-               white-space:nowrap;transition:.15s;min-width:110px">
-        &#128203; העתק
-      </button>
-    </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px">
-      <a href="https://wa.me/?text={quote_plus('הי! אנא מלא/י את הזמינות שלך לעמדה ' + st + ' בשבוע הקרוב: ' + base + '/form?team=' + quote_plus(team) + '&station=' + quote_plus(st))}"
-         target="_blank"
-         style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;
-                background:#25D366;color:white;border-radius:7px;text-decoration:none;
-                font-weight:600">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-        וואטסאפ
-      </a>
-    </div>
+  <div class="card-title"><span class="step-num">2</span> שלח לינק לעובדים</div>
+  <p style="font-size:13px;color:#718096;margin-bottom:14px">שלח/י לינק זה לכל העובדים — בטופס הם יבחרו לאיזו עמדה הם מגישים זמינות.</p>
+  <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:12px">
+    <input id="emp-link-input" type="text" value="''' + emp_link + '''"
+      readonly
+      style="flex:1;padding:11px 14px;border:1.5px solid #90cdf4;border-radius:9px;
+             font-size:13px;background:#ebf8ff;color:#2b6cb0;font-family:inherit;
+             direction:ltr;text-align:left;cursor:pointer"
+      onclick="this.select()">
+    <button id="copy-btn" onclick="copyLink()"
+      style="padding:11px 18px;background:#2b6cb0;color:white;border:none;border-radius:9px;
+             font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;
+             white-space:nowrap;transition:.15s;min-width:110px">
+      &#128203; העתק
+    </button>
   </div>
-  ''' for st in stations) + '''
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+    <a href="https://wa.me/?text=''' + quote_plus('הי! אנא מלא/י את הזמינות שלך לשבוע הקרוב: ' + emp_link) + '''"
+       target="_blank"
+       style="display:inline-flex;align-items:center;gap:7px;padding:10px 16px;
+              background:#25D366;color:white;border-radius:9px;text-decoration:none;
+              font-size:13px;font-weight:700">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+      שלח בוואטסאפ
+    </a>
+    <a href="/form?team=''' + quote_plus(team) + '''" target="_blank"
+       style="display:inline-flex;align-items:center;gap:7px;padding:10px 16px;
+              background:#f7fafc;border:1.5px solid #e2e8f0;color:#4a5568;border-radius:9px;
+              text-decoration:none;font-size:13px;font-weight:600">
+      &#128065; תצוגה מקדימה
+    </a>
+  </div>
+  ''' + (''.join(
+      f'<div style="display:inline-flex;align-items:center;gap:6px;background:#f7fafc;'
+      f'border:1px solid #e2e8f0;border-radius:7px;padding:6px 12px;margin:3px;font-size:12px">'
+      f'&#127970; <strong>{st}</strong>: {len(get_station_subs(data, st))} עובדים</div>'
+      for st in stations
+  ) if len(stations) > 1 else '') + '''
 </div>
 <script>
-function copyToClipboard(text){
-  navigator.clipboard.writeText(text).then(()=>{
-    // Find the button that was clicked
-    event.target.textContent='✓ הועתק!';
-    event.target.style.background='#276749';
-    setTimeout(()=>{event.target.textContent='📋 העתק';event.target.style.background='#2b6cb0';},2500);
-  }).catch(()=>{
-    // Fallback
-    const inp=document.createElement('input');
-    inp.value=text;document.body.appendChild(inp);
-    inp.select();inp.setSelectionRange(0,9999);
-    document.execCommand('copy');
-    document.body.removeChild(inp);
-  });
+function copyLink(){
+  const inp=document.getElementById('emp-link-input');
+  const btn=document.getElementById('copy-btn');
+  inp.select();inp.setSelectionRange(0,9999);
+  let ok=false;
+  try{ok=document.execCommand('copy');}catch(e){}
+  if(!ok && navigator.clipboard){navigator.clipboard.writeText(inp.value).catch(()=>{});ok=true;}
+  btn.textContent='\u2713 \u05d4\u05d5\u05e2\u05ea\u05da!';btn.style.background='#276749';
+  setTimeout(()=>{btn.innerHTML='\ud83d\udccb \u05d4\u05e2\u05ea\u05e7';btn.style.background='#2b6cb0';},2500);
 }
 </script>
 
@@ -1089,14 +1138,9 @@ class Handler(BaseHTTPRequestHandler):
             if not team:
                 self.redirect('/'); return
             name = unquote_plus(qs.get('name', [''])[0])
-            station = unquote_plus(qs.get('station', [''])[0])
             data = load_team(team)
             shift_mode = data.get('shift_mode', '3x8')
-            # Default to first station if not specified
-            if not station:
-                stations = get_stations(data)
-                station = stations[0] if stations else 'עמדה 1'
-            self.send_html(employee_page(name, data.get('week_start', ''), team, shift_mode, station))
+            self.send_html(employee_page(name, data.get('week_start', ''), team, shift_mode, get_stations(data)))
 
         elif path == '/admin':
             if not team:
@@ -1239,9 +1283,14 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
                 if not team:
                     self.send_json({'ok': False, 'error': 'צוות חסר'}, 400); return
                 data   = load_team(team)
-                stations = get_stations(data)
-                # Get station from form, default to first station
-                station = form.get('station', '').strip() or stations[0]
+                all_stations = get_stations(data)
+                # Get selected stations from form (new: array; old: single string)
+                sel_stations = form.get('stations', None)
+                if not sel_stations:
+                    single = form.get('station', '').strip()
+                    sel_stations = [single] if single else [all_stations[0]]
+                # Filter to valid station names only
+                sel_stations = [s for s in sel_stations if s in all_stations] or [all_stations[0]]
                 shifts = form.get('shifts', {})
                 avail  = defaultdict(list)
                 for key, val in shifts.items():
@@ -1250,7 +1299,7 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
                         avail[day].append(shift)
                 count = sum(len(v) for v in avail.values())
                 data.setdefault('submissions', {})[name] = {
-                    'station': station,
+                    'stations': sel_stations,
                     'shifts': {k: v for k, v in shifts.items() if v},
                     'notes': form.get('notes', ''),
                     'submitted_at': datetime.now().isoformat(),
