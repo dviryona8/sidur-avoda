@@ -204,14 +204,23 @@ def fmt_date(d) -> str:
 # ─────────────────────────────────────────────
 # PDF GENERATOR
 # ─────────────────────────────────────────────
-def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', shift_mode='3x8'):
+def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', shift_mode='3x8', day_modes=None):
+    day_modes = day_modes or {}
+
     # Determine shifts and hours based on mode
-    if shift_mode == '2x12':
+    # Always show all 3 shifts if ANY day uses 3x8 (to keep table structure uniform)
+    # If ALL days are 2x12, use the 2-shift layout
+    all_modes = [day_modes.get(d, shift_mode) for d in DAYS]
+    has_3x8 = any(m == '3x8' for m in all_modes)
+
+    if shift_mode == '2x12' and not has_3x8:
         SHIFTS_LOCAL = ['בוקר', 'לילה']
         SHIFT_HRS_LOCAL = {'בוקר': '06:00-18:00', 'לילה': '18:00-06:00'}
-    else:  # '3x8' default
+    else:
         SHIFTS_LOCAL = ['בוקר', 'צהריים', 'לילה']
         SHIFT_HRS_LOCAL = {'בוקר': '06:00-14:00', 'צהריים': '14:00-22:00', 'לילה': '22:00-06:00'}
+
+    SKIP_BG = colors.HexColor('#e2e8f0')  # neutral gray for skipped 2x12 noon cells
 
     PW, PH = landscape(A4)
     c = canvas.Canvas(output, pagesize=landscape(A4))
@@ -307,8 +316,19 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
         for di, day in enumerate(DAYS):
             x   = MX + LBL_W + di*DAY_W
             emp = sched[day].get(shift)   # .get() handles days with fewer shifts (mixed mode)
-            bg  = MISS_BG if emp is None else bg_light
 
+            # If this day is in 2x12 mode and this is the noon shift → draw neutral gray block
+            day_eff = day_modes.get(day, shift_mode)
+            if day_eff == '2x12' and shift == 'צהריים':
+                c.setFillColor(SKIP_BG)
+                c.rect(x, ry, DAY_W, SHIFT_H, fill=1, stroke=1)
+                c.setStrokeColor(colors.HexColor('#cbd5e0'))
+                c.setLineWidth(0.4)
+                for offset in [0.3, 0.6, 0.9]:
+                    c.line(x + offset*cm, ry, x, ry + offset*cm*0.8)
+                continue
+
+            bg  = MISS_BG if emp is None else bg_light
             c.setFillColor(bg)
             c.rect(x, ry, DAY_W, SHIFT_H, fill=1, stroke=1)
 

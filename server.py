@@ -1297,8 +1297,8 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
                     team_safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in team)
                     out_m = '/tmp/mgr_{}.pdf'.format(team_safe)
                     out_e = '/tmp/emp_{}.pdf'.format(team_safe)
-                    make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_m, mode='manager', shift_mode=shift_mode)
-                    make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_e, mode='employee', shift_mode=shift_mode)
+                    make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_m, mode='manager', shift_mode=shift_mode, day_modes=day_modes)
+                    make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_e, mode='employee', shift_mode=shift_mode, day_modes=day_modes)
                 except Exception as e:
                     self.redirect('/admin?team=' + quote_plus(team) + '&msg=שגיאה+ביצירת+PDF'); return
             self.redirect('/admin/downloads?team=' + quote_plus(team))
