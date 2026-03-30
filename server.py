@@ -1233,7 +1233,14 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
             data = load_team(team)
             if not self.check_admin_auth(team, data):
                 return
-            data['week_start']  = params.get('week_start', [''])[0]
+            new_week = params.get('week_start', [''])[0]
+            # If the week changed → clear previous submissions and schedule
+            if new_week and new_week != data.get('week_start', ''):
+                data['submissions']   = {}
+                data['last_schedule'] = {}
+                data['last_hrs']      = {}
+                data['day_modes']     = {}
+            data['week_start']  = new_week
             data['preferences'] = params.get('preferences', [''])[0]
             data['shift_mode']  = params.get('shift_mode', ['3x8'])[0]
             # Only update password if a new one was provided
