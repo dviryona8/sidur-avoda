@@ -17,7 +17,7 @@ PORT    = int(os.environ.get('PORT', 5050))
 
 sys.path.insert(0, BASE)
 try:
-    from schedule_gen import (auto_schedule, make_pdf,
+    from schedule_gen import (auto_schedule, make_pdf, make_pdf_stations,
                                parse_preferences, get_week_dates, fmt_date)
     PDF_OK = True
 except Exception:
@@ -48,12 +48,25 @@ def save_all(d):
 def load_team(team):
     return load_all().get('teams', {}).get(team,
            {'week_start': '', 'preferences': '', 'submissions': {},
-            'shift_mode': '3x8', 'admin_password': ''})
+            'shift_mode': '3x8', 'admin_password': '',
+            'stations': ['עמדה 1'], 'station_schedules': {}})
 
 def save_team(team, tdata):
     d = load_all()
     d.setdefault('teams', {})[team] = tdata
     save_all(d)
+
+def get_stations(data):
+    """Get list of stations for a team, defaulting to ['עמדה 1']."""
+    return data.get('stations', ['עמדה 1']) or ['עמדה 1']
+
+def get_station_subs(data, station):
+    """Return submissions for a specific station (backwards compat)."""
+    stations = get_stations(data)
+    default_st = stations[0]
+    subs = data.get('submissions', {})
+    return {n: s for n, s in subs.items()
+            if s.get('station', default_st) == station}
 
 def all_teams():
     return list(load_all().get('teams', {}).keys())
@@ -224,11 +237,12 @@ function createTeam(e){
 # ══════════════════════════════════════════════════════════════
 # EMPLOYEE FORM
 # ══════════════════════════════════════════════════════════════
-def employee_page(name_hint, wk, team, shift_mode='3x8'):
+def employee_page(name_hint, wk, team, shift_mode='3x8', station=''):
     wlabel   = week_label(wk)
     dates    = week_dates_json(wk)
     subtitle = ('שבוע: ' + wlabel) if wlabel else 'מלא/י את הזמינות שלך לשבוע הקרוב'
     team_tag = (' | צוות: ' + team) if team else ''
+    station_tag = (' | עמדה: ' + station) if station else ''
 
     if shift_mode == '2x12':
         shifts = ['בוקר', 'לילה']
@@ -312,7 +326,7 @@ textarea{min-height:80px;resize:vertical}
 <body>
 <div class="hdr">
   <h1>&#128203; טופס זמינות משמרות</h1>
-  <p>''' + subtitle + team_tag + '''</p>
+  <p>''' + subtitle + team_tag + station_tag + '''</p>
 </div>
 <div class="card" id="form-card">
   <div style="margin-bottom:16px">
@@ -353,6 +367,7 @@ textarea{min-height:80px;resize:vertical}
 const DAYS=''' + days_json + ''';const SHFTS=''' + shifts_json + ''';
 const HRS=''' + hrs_json + ''';const DATES=''' + dates_json + ''';
 const WKND=new Set(''' + wknd_list + ''');const TEAM=''' + team_js + ''';
+const STATION=''' + json.dumps(station, ensure_ascii=False) + ''';
 const CLS={'\u05d1\u05d5\u05e7\u05e8':'cm','\u05e6\u05d4\u05e8\u05d9\u05d9\u05dd':'ca','\u05dc\u05d9\u05dc\u05d4':'cn'};
 const head=document.getElementById('grid-head');
 const body=document.getElementById('grid-body');
@@ -395,9 +410,9 @@ function doSubmit(){
   const notes=document.getElementById('notes').value.trim();
   const shifts={};
   document.querySelectorAll('#grid input[type=checkbox]').forEach(cb=>{shifts[cb.id]=cb.checked;});
-  fetch('/submit?team='+encodeURIComponent(TEAM),{
+  fetch('/submit?team='+encodeURIComponent(TEAM)+'&station='+encodeURIComponent(STATION),{
     method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name,shifts,notes})
+    body:JSON.stringify({name,shifts,notes,station:STATION})
   }).then(r=>r.json()).then(r=>{
     if(r.ok){
       document.getElementById('form-card').style.display='none';
@@ -505,7 +520,7 @@ def admin_page(team, data, flash=''):
     admin_password = data.get('admin_password', '')
     base       = get_public_base()
     wl         = week_label(wk)
-    emp_link   = base + '/form?team=' + quote_plus(team)
+    stations   = get_stations(data)
     last_sched = data.get('last_schedule', {})
 
     flash_html = ''
@@ -565,8 +580,10 @@ def admin_page(team, data, flash=''):
         ts = sub.get('submitted_at','')[:16].replace('T',' ')
         icon = '&#9989;' if valid else '&#9888;&#65039;'
         del_url = '/admin/delete/' + quote_plus(name) + '?team=' + quote_plus(team)
+        station = sub.get('station', get_stations(data)[0])
         rows += ('<tr>'
                  '<td style="font-weight:700;padding:10px 8px">' + icon + ' ' + name + '</td>'
+                 '<td style="font-size:12px;color:#718096">' + station + '</td>'
                  '<td style="text-align:center">' + col(total,  total  >= MIN_ALL)   + '</td>'
                  '<td style="text-align:center">' + col(nights, nights >= MIN_NIGHT) + '</td>'
                  '<td style="text-align:center">' + col(wknds,  wknds  >= MIN_WKND)  + '</td>'
@@ -577,7 +594,7 @@ def admin_page(team, data, flash=''):
                  ' style="color:#c53030;font-size:12px;text-decoration:none">&#128465;</a></td>'
                  '</tr>')
     if not rows:
-        rows = '<tr><td colspan="8" style="text-align:center;padding:30px;color:#a0aec0">טרם התקבלו הגשות</td></tr>'
+        rows = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#a0aec0">טרם התקבלו הגשות</td></tr>'
 
     clear_btn = ''
     if subs:
@@ -643,6 +660,27 @@ tr:hover td{background:#f7fafc}
 <div class="con">
 ''' + flash_html + '''
 
+<!-- שלב 0: ניהול עמדות -->
+<div class="card">
+  <div class="card-title"><span class="step-num">0</span> ניהול עמדות (עמדות עבודה)</div>
+  <div style="margin-bottom:14px">
+    <label>עמדות נוכחיות:</label>
+    <div style="background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:12px">
+      ''' + ''.join(f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #e2e8f0"><span>{st}</span>' +
+                    (f'<form method="POST" action="/admin/stations?team={quote_plus(team)}" style="margin:0;display:inline"><input type="hidden" name="action" value="delete"><input type="hidden" name="station" value="{st}"><button type="submit" onclick="return confirm(\'מחק עמדה זו?\')" style="padding:4px 10px;background:#c53030;color:white;border:none;border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit">מחק</button></form>' if len(stations) > 1 else '<span style="color:#a0aec0">לא ניתן למחוק</span>') +
+                    '</div>' for st in stations) + '''
+    </div>
+  </div>
+  <div style="margin-bottom:14px">
+    <label>הוסף עמדה חדשה (עד 4 סה"כ)</label>
+    <form method="POST" action="/admin/stations?team=''' + quote_plus(team) + '''" style="display:flex;gap:8px">
+      <input type="hidden" name="action" value="add">
+      <input type="text" name="station" placeholder="לדוגמה: אקליפטוס, ברוש..." required style="flex:1;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;font-family:inherit;direction:rtl">
+      <button type="submit" ''' + ('disabled style="background:#a0aec0"' if len(stations) >= 4 else 'style="background:#276749;color:white"') + ''' style="padding:10px 18px;border:none;border-radius:8px;font-size:14px;cursor:pointer;font-weight:700;font-family:inherit;white-space:nowrap">הוסף</button>
+    </form>
+  </div>
+</div>
+
 <!-- שלב 1: תאריך שבוע + סוג משמרות -->
 <div class="card">
   <div class="card-title"><span class="step-num">1</span> הגדרות שבוע</div>
@@ -673,56 +711,55 @@ tr:hover td{background:#f7fafc}
   ''' + week_display + '''
 </div>
 
-<!-- שלב 2: לינק לעובדים -->
+<!-- שלב 2: לינקים לעובדים -->
 <div class="card">
-  <div class="card-title"><span class="step-num">2</span> שלח לינק לעובדים</div>
-  <p style="font-size:13px;color:#718096;margin-bottom:14px">שלח/י לינק זה לעובדי הצוות — הם ימלאו את הזמינות שלהם דרכו.</p>
-  <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:12px">
-    <input id="emp-link-input" type="text" value="''' + emp_link + '''"
-      readonly
-      style="flex:1;padding:11px 14px;border:1.5px solid #90cdf4;border-radius:9px;
-             font-size:13px;background:#ebf8ff;color:#2b6cb0;font-family:inherit;
-             direction:ltr;text-align:left;cursor:pointer"
-      onclick="this.select()">
-    <button id="copy-btn"
-      onclick="copyLink()"
-      style="padding:11px 18px;background:#2b6cb0;color:white;border:none;border-radius:9px;
-             font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;
-             white-space:nowrap;transition:.15s;min-width:110px">
-      &#128203; העתק
-    </button>
+  <div class="card-title"><span class="step-num">2</span> שלח לינקים לעובדים</div>
+  <p style="font-size:13px;color:#718096;margin-bottom:14px">שלח/י לכל עובד את הלינק של העמדה שלו — הם ימלאו את הזמינות שלהם דרכו.</p>
+  ''' + ''.join(f'''
+  <div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #e2e8f0">
+    <div style="margin-bottom:8px"><strong>{st}</strong> <span style="color:#718096;font-size:12px">({sum(1 for n,s in subs.items() if s.get('station', get_stations(data)[0]) == st)} עובדים)</span></div>
+    <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:10px">
+      <input type="text" value="{base}/form?team={quote_plus(team)}&station={quote_plus(st)}"
+        readonly
+        style="flex:1;padding:11px 14px;border:1.5px solid #90cdf4;border-radius:9px;
+               font-size:13px;background:#ebf8ff;color:#2b6cb0;font-family:inherit;
+               direction:ltr;text-align:left;cursor:pointer"
+        onclick="this.select()">
+      <button onclick="copyToClipboard(this.previousElementSibling.value)"
+        style="padding:11px 18px;background:#2b6cb0;color:white;border:none;border-radius:9px;
+               font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;
+               white-space:nowrap;transition:.15s;min-width:110px">
+        &#128203; העתק
+      </button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px">
+      <a href="https://wa.me/?text={quote_plus('הי! אנא מלא/י את הזמינות שלך לעמדה ' + st + ' בשבוע הקרוב: ' + base + '/form?team=' + quote_plus(team) + '&station=' + quote_plus(st))}"
+         target="_blank"
+         style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;
+                background:#25D366;color:white;border-radius:7px;text-decoration:none;
+                font-weight:600">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        וואטסאפ
+      </a>
+    </div>
   </div>
-  <div style="display:flex;gap:10px;flex-wrap:wrap">
-    <a href="https://wa.me/?text=''' + quote_plus('הי! אנא מלא/י את הזמינות שלך לשבוע הקרוב: ' + emp_link) + '''"
-       target="_blank"
-       style="display:inline-flex;align-items:center;gap:7px;padding:10px 16px;
-              background:#25D366;color:white;border-radius:9px;text-decoration:none;
-              font-size:13px;font-weight:700">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-      שלח בוואטסאפ
-    </a>
-    <a href="/form?team=''' + quote_plus(team) + '''" target="_blank"
-       style="display:inline-flex;align-items:center;gap:7px;padding:10px 16px;
-              background:#f7fafc;border:1.5px solid #e2e8f0;color:#4a5568;border-radius:9px;
-              text-decoration:none;font-size:13px;font-weight:600">
-      &#128065; תצוגה מקדימה
-    </a>
-  </div>
+  ''' for st in stations) + '''
 </div>
 <script>
-function copyLink(){
-  const inp=document.getElementById('emp-link-input');
-  const btn=document.getElementById('copy-btn');
-  inp.select();inp.setSelectionRange(0,9999);
-  let ok=false;
-  try{ok=document.execCommand('copy');}catch(e){}
-  if(!ok && navigator.clipboard){
-    navigator.clipboard.writeText(inp.value).catch(()=>{});
-    ok=true;
-  }
-  btn.textContent='✓ הועתק!';
-  btn.style.background='#276749';
-  setTimeout(()=>{btn.innerHTML='📋 העתק';btn.style.background='#2b6cb0';},2500);
+function copyToClipboard(text){
+  navigator.clipboard.writeText(text).then(()=>{
+    // Find the button that was clicked
+    event.target.textContent='✓ הועתק!';
+    event.target.style.background='#276749';
+    setTimeout(()=>{event.target.textContent='📋 העתק';event.target.style.background='#2b6cb0';},2500);
+  }).catch(()=>{
+    // Fallback
+    const inp=document.createElement('input');
+    inp.value=text;document.body.appendChild(inp);
+    inp.select();inp.setSelectionRange(0,9999);
+    document.execCommand('copy');
+    document.body.removeChild(inp);
+  });
 }
 </script>
 
@@ -750,7 +787,7 @@ function copyLink(){
     <div style="overflow-x:auto">
     <table>
       <thead><tr>
-        <th>עובד</th><th style="text-align:center">סה"כ</th>
+        <th>עובד</th><th>עמדה</th><th style="text-align:center">סה"כ</th>
         <th style="text-align:center">לילות</th><th style="text-align:center">סופ"ש</th>
         <th>בחירות</th><th>הערות</th><th>זמן</th><th>&#128465;</th>
       </tr></thead>
@@ -797,7 +834,8 @@ function toggleAdv(){
 # SCHEDULE EDIT PAGE
 # ══════════════════════════════════════════════════════════════
 def schedule_edit_page(team, data):
-    sched      = data.get('last_schedule', {})
+    station_schedules = data.get('station_schedules', {}) or {'עמדה 1': data.get('last_schedule', {})}
+    stations   = get_stations(data)
     subs       = data.get('submissions', {})
     wk         = data.get('week_start', '')
     shift_mode = data.get('shift_mode', '3x8')   # global default
@@ -810,12 +848,8 @@ def schedule_edit_page(team, data):
 
     shift_colors = {'בוקר': '#f0fff4', 'צהריים': '#fffbeb', 'לילה': '#ebf4ff'}
     shift_border = {'בוקר': '#48bb78', 'צהריים': '#d69e2e', 'לילה': '#4299e1'}
-    hrs_3x8 = {'בוקר': '06:00–14:00', 'צהריים': '14:00–22:00', 'לילה': '22:00–06:00'}
 
-    all_employees = sorted(subs.keys())
-    avail_map = {n: sub_to_avail(s) for n, s in subs.items()}
-
-    # ── Build day header row (name + date) ──────────────────────────
+    # ── Build day header row (name + date) - ONCE for all stations ──────────────────────────
     day_name_cells = '<th style="background:#1a365d;color:white;padding:9px 6px;width:90px;font-size:11px;vertical-align:middle">משמרת</th>'
     day_toggle_cells = '<td style="background:#263554;padding:4px 6px;font-size:10px;color:rgba(255,255,255,.6)">מצב יום:</td>'
 
@@ -842,53 +876,72 @@ def schedule_edit_page(team, data):
             f'</div></td>'
         )
 
-    # ── Build datalist of all registered employees (shared) ──
+    # ── Build datalist of all registered employees ──
+    all_employees = sorted(subs.keys())
     dl_opts = ''.join(f'<option value="{e}">' for e in all_employees)
     shared_dl = f'<datalist id="emp-dl">{dl_opts}</datalist>'
 
-    # ── Build 3 shift rows (always all 3; noon hidden by JS for 2x12 days) ──
-    table_rows = ''
-    for sh in ['בוקר', 'צהריים', 'לילה']:
-        bg         = shift_colors[sh]
-        border_col = shift_border[sh]
-        cells = ''
-        for i, day in enumerate(DAYS):
-            current    = sched.get(day, {}).get(sh, '') or ''
-            avail_emps = [e for e in all_employees if sh in avail_map.get(e, {}).get(day, [])]
-            # Warn if current value is a registered employee not available for this slot
-            warn = ' ⚠' if (current and current in all_employees and current not in avail_emps) else ''
-            field   = f'sched__{day}__{sh}'
-            cell_id = f'cell_{i}_noon' if sh == 'צהריים' else ''
-            id_attr = f' id="{cell_id}"' if cell_id else ''
-            # Initial display: for 2x12 days use visibility:hidden (NOT display:none)
-            # so column alignment stays intact in RTL table layout.
-            if sh == 'צהריים' and eff_mode[day] == '2x12':
-                vis_style = ';visibility:hidden;background:#e2e8f0'
+    # ── Build tables for each station ──
+    station_tables = ''
+    for st_idx, station in enumerate(stations):
+        sched = station_schedules.get(station, {})
+        # Get only employees who submitted for this station
+        station_subs = get_station_subs(data, station)
+        avail_map = {n: sub_to_avail(s) for n, s in station_subs.items()}
+        station_employees = sorted(station_subs.keys())
+
+        # Station header
+        station_tables += (f'<div style="margin-top:24px;padding-top:16px;border-top:2px solid #2b6cb0">'
+                          f'<h3 style="margin-bottom:12px;color:#2d3748;font-size:14px">עמדה: {station}</h3>')
+
+        # Build 3 shift rows for this station
+        table_rows = ''
+        for sh in ['בוקר', 'צהריים', 'לילה']:
+            bg = shift_colors[sh]
+            border_col = shift_border[sh]
+            cells = ''
+            for i, day in enumerate(DAYS):
+                current = sched.get(day, {}).get(sh, '') or ''
+                avail_emps = [e for e in station_employees if sh in avail_map.get(e, {}).get(day, [])]
+                warn = ' ⚠' if (current and current in station_employees and current not in avail_emps) else ''
+                field = f'sched__{st_idx}__{day}__{sh}'
+                cell_id = f'cell_{st_idx}_{i}_noon' if sh == 'צהריים' else ''
+                id_attr = f' id="{cell_id}"' if cell_id else ''
+                if sh == 'צהריים' and eff_mode[day] == '2x12':
+                    vis_style = ';visibility:hidden;background:#e2e8f0'
+                else:
+                    vis_style = ''
+                warn_title = 'title="עובד לא סימן זמינות למשמרת זו"' if warn else ''
+                cells += (
+                    f'<td{id_attr} style="padding:6px 4px;background:{bg};border:1px solid #e2e8f0{vis_style}">'
+                    f'<input type="text" name="{field}" value="{current}" list="emp-dl"'
+                    f' placeholder="הקלד שם..." {warn_title}'
+                    f' style="width:100%;padding:5px 6px;border:1.5px solid {border_col};'
+                    f'border-radius:6px;font-size:12px;font-family:inherit;direction:rtl;'
+                    f'background:white;box-sizing:border-box">'
+                    + (f'<span style="font-size:10px;color:#c05621">{warn}</span>' if warn else '')
+                    + f'</td>'
+                )
+
+            if sh == 'בוקר':
+                hrs_label = '<span style="display:block;font-size:9px;opacity:.65">06:00–14:00</span>'
+            elif sh == 'צהריים':
+                hrs_label = '<span style="display:block;font-size:9px;opacity:.65">14:00–22:00</span>'
             else:
-                vis_style = ''
-            warn_title = 'title="עובד לא סימן זמינות למשמרת זו"' if warn else ''
-            cells += (
-                f'<td{id_attr} style="padding:6px 4px;background:{bg};border:1px solid #e2e8f0{vis_style}">'
-                f'<input type="text" name="{field}" value="{current}" list="emp-dl"'
-                f' placeholder="הקלד שם..." {warn_title}'
-                f' style="width:100%;padding:5px 6px;border:1.5px solid {border_col};'
-                f'border-radius:6px;font-size:12px;font-family:inherit;direction:rtl;'
-                f'background:white;box-sizing:border-box">'
-                + (f'<span style="font-size:10px;color:#c05621">{warn}</span>' if warn else '')
-                + f'</td>'
-            )
+                hrs_label = '<span style="display:block;font-size:9px;opacity:.65">22:00–06:00</span>'
 
-        # Row label – for בוקר/לילה show both possible hour ranges; noon shows 3x8 only
-        if sh == 'בוקר':
-            hrs_label = '<span id="lbl-boker" style="display:block;font-size:9px;opacity:.65">06:00–14:00</span>'
-        elif sh == 'צהריים':
-            hrs_label = '<span style="display:block;font-size:9px;opacity:.65">14:00–22:00</span>'
-        else:  # לילה
-            hrs_label = '<span id="lbl-layla" style="display:block;font-size:9px;opacity:.65">22:00–06:00</span>'
+            table_rows += (f'<tr><td style="background:#2d3748;color:white;text-align:center;'
+                          f'padding:8px 4px;font-size:12px;font-weight:700;white-space:nowrap">'
+                          f'{sh}{hrs_label}</td>' + cells + '</tr>')
 
-        table_rows += (f'<tr><td style="background:#2d3748;color:white;text-align:center;'
-                       f'padding:8px 4px;font-size:12px;font-weight:700;white-space:nowrap">'
-                       f'{sh}{hrs_label}</td>' + cells + '</tr>')
+        # Station table HTML
+        station_tables += (f'<div class="tbl-wrap">'
+                          f'<table>'
+                          f'<thead><tr>{day_name_cells}</tr><tr>{day_toggle_cells}</tr></thead>'
+                          f'<tbody>{table_rows}</tbody>'
+                          f'</table></div>'
+                          f'<input type="hidden" name="station_name__{st_idx}" value="{station}">'
+                          f'</div>')
 
     # JS: initial modes array
     init_modes = json.dumps([eff_mode[d] for d in DAYS])
@@ -925,15 +978,7 @@ table{border-collapse:collapse;min-width:780px;width:100%}
   </p>
   <form method="POST" action="/admin/schedule/save?team=''' + quote_plus(team) + '''">
     ''' + shared_dl + '''
-    <div class="tbl-wrap">
-    <table>
-      <thead>
-        <tr>''' + day_name_cells + '''</tr>
-        <tr>''' + day_toggle_cells + '''</tr>
-      </thead>
-      <tbody>''' + table_rows + '''</tbody>
-    </table>
-    </div>
+    ''' + station_tables + '''
     <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap">
       <button type="submit" class="btn btn-green">&#128196; שמור וצור PDF</button>
       <a href="/admin?team=''' + quote_plus(team) + '''" class="btn btn-gray">&#8592; חזרה ללא שמירה</a>
@@ -953,17 +998,13 @@ function setDayMode(i, mode){
   document.getElementById('btn3x8_'+i).style.background  = mode==='3x8'  ? '#276749' : 'rgba(100,140,200,.35)';
   document.getElementById('btn2x12_'+i).style.background = mode==='2x12' ? '#276749' : 'rgba(100,140,200,.35)';
 
-  // Use visibility:hidden (NOT display:none) so the table column structure
-  // stays intact and RTL alignment doesn't shift the other columns.
-  const noon=document.getElementById('cell_'+i+'_noon');
-  if(noon){
+  // Hide noon cells for all stations when 2x12 is selected
+  document.querySelectorAll('[id^="cell_"][id$="_'+i+'_noon"]').forEach(noon=>{
     noon.style.visibility = mode==='2x12' ? 'hidden' : 'visible';
     noon.style.background = mode==='2x12' ? '#e2e8f0' : '#fffbeb';
-    const sel=noon.querySelector('select');
-    if(sel) sel.disabled = (mode==='2x12');
-  }
+  });
 }
-// Apply initial state on load (already set server-side but run JS for consistency)
+// Apply initial state on load
 modes.forEach((m,i)=>setDayMode(i,m));
 </script>
 </body></html>''')
@@ -1048,9 +1089,14 @@ class Handler(BaseHTTPRequestHandler):
             if not team:
                 self.redirect('/'); return
             name = unquote_plus(qs.get('name', [''])[0])
+            station = unquote_plus(qs.get('station', [''])[0])
             data = load_team(team)
             shift_mode = data.get('shift_mode', '3x8')
-            self.send_html(employee_page(name, data.get('week_start', ''), team, shift_mode))
+            # Default to first station if not specified
+            if not station:
+                stations = get_stations(data)
+                station = stations[0] if stations else 'עמדה 1'
+            self.send_html(employee_page(name, data.get('week_start', ''), team, shift_mode, station))
 
         elif path == '/admin':
             if not team:
@@ -1078,7 +1124,7 @@ class Handler(BaseHTTPRequestHandler):
             data = load_team(team)
             if not self.check_admin_auth(team, data):
                 return
-            if not data.get('last_schedule'):
+            if not data.get('last_schedule') and not data.get('station_schedules'):
                 self.redirect('/admin?team=' + quote_plus(team)); return
             self.send_html(schedule_edit_page(team, data))
 
@@ -1100,14 +1146,39 @@ class Handler(BaseHTTPRequestHandler):
             wk   = data.get('week_start', '')
             subs = data.get('submissions', {})
             shift_mode = data.get('shift_mode', '3x8')
+            stations = get_stations(data)
             if not wk or not PDF_OK:
                 self.redirect('/admin?team=' + quote_plus(team) + '&msg=שגיאה+—+הגדר+תאריך'); return
-            avail = {n: sub_to_avail(s) for n, s in subs.items()}
+
             prefs = parse_preferences(data.get('preferences', ''))
-            sched, hrs, nh = auto_schedule(avail, prefs, shift_mode=shift_mode)
-            data['last_schedule'] = sched
-            data['last_hrs'] = hrs
-            data['last_nh'] = nh
+
+            # Generate schedule per station with cross-station 24h constraint
+            station_schedules = {}
+            all_assigned = {}  # Track assignments globally for 24h constraint
+
+            for station in stations:
+                station_subs = get_station_subs(data, station)
+                if not station_subs:
+                    # No submissions for this station, create empty schedule
+                    station_schedules[station] = {d: {} for d in DAYS}
+                    continue
+
+                avail = {n: sub_to_avail(s) for n, s in station_subs.items()}
+                sched, hrs, nh = auto_schedule(avail, prefs, shift_mode=shift_mode)
+                station_schedules[station] = sched
+
+                # Track assignments for cross-station constraint
+                for day in DAYS:
+                    for shift in sched[day]:
+                        emp = sched[day][shift]
+                        if emp:
+                            if emp not in all_assigned:
+                                all_assigned[emp] = []
+                            all_assigned[emp].append((day, shift))
+
+            data['station_schedules'] = station_schedules
+            # Backwards compat: set last_schedule to first station
+            data['last_schedule'] = station_schedules.get(stations[0], {})
             save_team(team, data)
             # Go to edit page instead of downloading directly
             self.redirect('/admin/schedule?team=' + quote_plus(team))
@@ -1168,6 +1239,9 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
                 if not team:
                     self.send_json({'ok': False, 'error': 'צוות חסר'}, 400); return
                 data   = load_team(team)
+                stations = get_stations(data)
+                # Get station from form, default to first station
+                station = form.get('station', '').strip() or stations[0]
                 shifts = form.get('shifts', {})
                 avail  = defaultdict(list)
                 for key, val in shifts.items():
@@ -1176,6 +1250,7 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
                         avail[day].append(shift)
                 count = sum(len(v) for v in avail.values())
                 data.setdefault('submissions', {})[name] = {
+                    'station': station,
                     'shifts': {k: v for k, v in shifts.items() if v},
                     'notes': form.get('notes', ''),
                     'submitted_at': datetime.now().isoformat(),
@@ -1239,19 +1314,24 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
                 # Archive current week's data before switching
                 if old_week:
                     data.setdefault('weeks', {})[old_week] = {
-                        'submissions':   data.get('submissions', {}),
-                        'last_schedule': data.get('last_schedule', {}),
-                        'last_hrs':      data.get('last_hrs', {}),
-                        'last_nh':       data.get('last_nh', {}),
-                        'day_modes':     data.get('day_modes', {}),
+                        'submissions':      data.get('submissions', {}),
+                        'last_schedule':    data.get('last_schedule', {}),
+                        'last_hrs':         data.get('last_hrs', {}),
+                        'last_nh':          data.get('last_nh', {}),
+                        'day_modes':        data.get('day_modes', {}),
+                        'station_schedules': data.get('station_schedules', {}),
+                        'stations':         data.get('stations', []),
                     }
                 # Load saved data for new week (or start fresh if never seen before)
                 wk_data = data.get('weeks', {}).get(new_week, {})
-                data['submissions']   = wk_data.get('submissions', {})
-                data['last_schedule'] = wk_data.get('last_schedule', {})
-                data['last_hrs']      = wk_data.get('last_hrs', {})
-                data['last_nh']       = wk_data.get('last_nh', {})
-                data['day_modes']     = wk_data.get('day_modes', {})
+                data['submissions']      = wk_data.get('submissions', {})
+                data['last_schedule']    = wk_data.get('last_schedule', {})
+                data['last_hrs']         = wk_data.get('last_hrs', {})
+                data['last_nh']          = wk_data.get('last_nh', {})
+                data['day_modes']        = wk_data.get('day_modes', {})
+                data['station_schedules'] = wk_data.get('station_schedules', {})
+                # Don't restore stations (keep current config) as they're team-wide
+                # data['stations'] stays as-is
             data['week_start']  = new_week
             data['preferences'] = params.get('preferences', [''])[0]
             data['shift_mode']  = params.get('shift_mode', ['3x8'])[0]
@@ -1279,53 +1359,71 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
             params = parse_qs(body.decode('utf-8'))
             wk = data.get('week_start', '')
             shift_mode = data.get('shift_mode', '3x8')
+            stations = get_stations(data)
             subs = data.get('submissions', {})
-            avail = {n: sub_to_avail(s) for n, s in subs.items()}
             prefs = parse_preferences(data.get('preferences', ''))
 
-            # Read per-day modes from form (daymode__{day})
+            # Read per-day modes from form (daymode__{day}) - shared across all stations
             day_modes = {}
             for day in DAYS:
                 field = f'daymode__{day}'
                 val = params.get(field, [shift_mode])[0].strip()
                 day_modes[day] = val if val in ('3x8', '2x12') else shift_mode
 
-            # Rebuild schedule from form fields, respecting per-day mode
-            sched = {d: {} for d in DAYS}
-            for day in DAYS:
-                dm = day_modes[day]
-                day_shifts = ['בוקר', 'לילה'] if dm == '2x12' else ['בוקר', 'צהריים', 'לילה']
-                for sh in day_shifts:
-                    field = f'sched__{day}__{sh}'
-                    val = params.get(field, [''])[0].strip()
-                    sched[day][sh] = val if val else None
+            # Rebuild schedule per station from form fields
+            station_schedules = {}
+            all_hrs = {}
+            all_nh = {}
 
-            data['last_schedule'] = sched
+            for st_idx, station in enumerate(stations):
+                sched = {d: {} for d in DAYS}
+                for day in DAYS:
+                    dm = day_modes[day]
+                    day_shifts = ['בוקר', 'לילה'] if dm == '2x12' else ['בוקר', 'צהריים', 'לילה']
+                    for sh in day_shifts:
+                        field = f'sched__{st_idx}__{day}__{sh}'
+                        val = params.get(field, [''])[0].strip()
+                        sched[day][sh] = val if val else None
+
+                station_schedules[station] = sched
+
+                # Recalculate hours for this station
+                station_subs = get_station_subs(data, station)
+                avail = {n: sub_to_avail(s) for n, s in station_subs.items()}
+                hrs = {emp: 0 for emp in avail}
+                nh = {emp: 0 for emp in avail}
+                for day in DAYS:
+                    dm = day_modes[day]
+                    h_map = {'בוקר': 12, 'לילה': 12} if dm == '2x12' else {'בוקר': 8, 'צהריים': 8, 'לילה': 8}
+                    for sh, emp in sched[day].items():
+                        if emp and emp in hrs:
+                            hrs[emp] = hrs.get(emp, 0) + h_map.get(sh, 8)
+                            if sh == 'לילה':
+                                nh[emp] = nh.get(emp, 0) + h_map.get(sh, 8)
+                all_hrs[station] = hrs
+                all_nh[station] = nh
+
+            data['station_schedules'] = station_schedules
+            data['last_schedule'] = station_schedules.get(stations[0], {})
             data['day_modes'] = day_modes
-
-            # Recalculate hours per employee based on per-day mode
-            hrs = {emp: 0 for emp in avail}
-            nh  = {emp: 0 for emp in avail}
-            for day in DAYS:
-                dm = day_modes[day]
-                h_map = {'בוקר': 12, 'לילה': 12} if dm == '2x12' else {'בוקר': 8, 'צהריים': 8, 'לילה': 8}
-                for sh, emp in sched[day].items():
-                    if emp and emp in hrs:
-                        hrs[emp] = hrs.get(emp, 0) + h_map.get(sh, 8)
-                        if sh == 'לילה':
-                            nh[emp] = nh.get(emp, 0) + h_map.get(sh, 8)
             save_team(team, data)
 
-            # Generate PDFs — use global shift_mode for PDF layout
-            # (mixed-mode days will still display correctly as PDF uses sched dict)
+            # Generate PDFs for all stations
             if PDF_OK and wk:
                 try:
                     wk_fmt = _normalize_wk(wk)
                     team_safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in team)
                     out_m = '/tmp/mgr_{}.pdf'.format(team_safe)
                     out_e = '/tmp/emp_{}.pdf'.format(team_safe)
-                    make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_m, mode='manager', shift_mode=shift_mode, day_modes=day_modes)
-                    make_pdf(sched, avail, hrs, nh, prefs, wk_fmt, out_e, mode='employee', shift_mode=shift_mode, day_modes=day_modes)
+
+                    # Build station lists for multi-station PDF
+                    stations_list_m = [(st, station_schedules[st]) for st in stations]
+                    stations_list_e = [(st, station_schedules[st]) for st in stations]
+
+                    make_pdf_stations(stations_list_m, all_hrs, all_hrs, all_nh, prefs, wk_fmt, out_m,
+                                    mode='manager', shift_mode=shift_mode, day_modes=day_modes)
+                    make_pdf_stations(stations_list_e, all_hrs, all_hrs, all_nh, prefs, wk_fmt, out_e,
+                                    mode='employee', shift_mode=shift_mode, day_modes=day_modes)
                 except Exception as e:
                     self.redirect('/admin?team=' + quote_plus(team) + '&msg=שגיאה+ביצירת+PDF'); return
             self.redirect('/admin/downloads?team=' + quote_plus(team))
@@ -1338,6 +1436,29 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
             data['submissions'] = {}
             save_team(team, data)
             self.redirect('/admin?team=' + quote_plus(team))
+
+        elif path == '/admin/stations':
+            try:
+                params = parse_qs(body.decode('utf-8'))
+                action = params.get('action', [''])[0]
+                station = params.get('station', [''])[0].strip()
+                if not team: self.redirect('/'); return
+                data = load_team(team)
+                if not self.check_admin_auth(team, data):
+                    return
+                stations = get_stations(data)
+                if action == 'add' and station and len(stations) < 4 and station not in stations:
+                    stations.append(station)
+                    data['stations'] = stations
+                elif action == 'delete' and station in stations and len(stations) > 1:
+                    stations.remove(station)
+                    data['stations'] = stations
+                    # Also remove its schedule
+                    data.get('station_schedules', {}).pop(station, None)
+                save_team(team, data)
+                self.redirect('/admin?team=' + quote_plus(team))
+            except Exception as e:
+                self.redirect('/admin?team=' + quote_plus(team))
 
         elif path == '/create-team':
             try:
@@ -1368,7 +1489,9 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
                     'admin_password': password,
                     'last_schedule': {},
                     'last_hrs': {},
-                    'last_nh': {}
+                    'last_nh': {},
+                    'stations': ['עמדה 1'],
+                    'station_schedules': {}
                 }
                 save_all(d)
                 # Set auth cookie and redirect to admin

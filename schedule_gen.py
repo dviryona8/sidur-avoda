@@ -204,12 +204,11 @@ def fmt_date(d) -> str:
 # ─────────────────────────────────────────────
 # PDF GENERATOR
 # ─────────────────────────────────────────────
-def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', shift_mode='3x8', day_modes=None):
+def _draw_station_page(c, sched, avail, hrs, night_hrs, prefs, week, mode, shift_mode, day_modes, station_name='', PW=None, PH=None):
+    """Internal helper to draw a single station page in a PDF canvas."""
     day_modes = day_modes or {}
 
     # Determine shifts and hours based on mode
-    # Always show all 3 shifts if ANY day uses 3x8 (to keep table structure uniform)
-    # If ALL days are 2x12, use the 2-shift layout
     all_modes = [day_modes.get(d, shift_mode) for d in DAYS]
     has_3x8 = any(m == '3x8' for m in all_modes)
 
@@ -220,10 +219,10 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
         SHIFTS_LOCAL = ['בוקר', 'צהריים', 'לילה']
         SHIFT_HRS_LOCAL = {'בוקר': '06:00-14:00', 'צהריים': '14:00-22:00', 'לילה': '22:00-06:00'}
 
-    SKIP_BG = colors.HexColor('#e2e8f0')  # neutral gray for skipped 2x12 noon cells
+    SKIP_BG = colors.HexColor('#e2e8f0')
 
-    PW, PH = landscape(A4)
-    c = canvas.Canvas(output, pagesize=landscape(A4))
+    if PW is None or PH is None:
+        PW, PH = landscape(A4)
     MX, MY = 1.0*cm, 0.65*cm
     TW = PW - 2*MX
 
@@ -231,10 +230,9 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
     NAVY      = colors.HexColor('#1a365d')
     BLUE      = colors.HexColor('#2b6cb0')
     SLATE     = colors.HexColor('#2d3748')
-    # Shift colours (used for BOTH main table cells and dots)
-    SH_LIGHT  = {'בוקר': colors.HexColor('#f0fff4'),   # mint
-                 'צהריים': colors.HexColor('#fffbeb'),  # amber
-                 'לילה':   colors.HexColor('#ebf4ff')}  # ice blue
+    SH_LIGHT  = {'בוקר': colors.HexColor('#f0fff4'),
+                 'צהריים': colors.HexColor('#fffbeb'),
+                 'לילה':   colors.HexColor('#ebf4ff')}
     SH_MED    = {'בוקר': colors.HexColor('#48bb78'),
                  'צהריים': colors.HexColor('#d69e2e'),
                  'לילה':   colors.HexColor('#4299e1')}
@@ -244,7 +242,7 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
     RED_TXT   = colors.HexColor('#c53030')
     GRAY_TXT  = colors.HexColor('#718096')
     AVAIL_BG  = colors.HexColor('#f7fafc')
-    PREF_CLR  = colors.HexColor('#744210')   # amber-dark for preference tags
+    PREF_CLR  = colors.HexColor('#744210')
 
     # ── Dimensions ───────────────────────────
     TITLE_H  = 1.3*cm
@@ -269,15 +267,18 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
     c.rect(MX, ty, TW, TITLE_H, fill=1, stroke=0)
     c.setFillColor(WHITE)
     c.setFont(FONT_B, 17)
+    title_text = H('סידור עבודה שבועי')
+    if station_name:
+        title_text += ' — ' + H(station_name)
     suffix = H('לעובדים') if mode == 'employee' else H('')
     c.drawCentredString(PW/2, ty + TITLE_H*0.55,
-        H('סידור עבודה שבועי') + (f'  —  {suffix}' if mode=='employee' else ''))
+        title_text + (f'  —  {suffix}' if mode=='employee' else ''))
     c.setFont(FONT, 8.5)
     c.drawString(MX+0.4*cm, ty+0.17*cm, f'Week: {week_label}')
     y = ty
 
     # ════════════════════════════════════════
-    # DAY HEADER ROW  (with date below name)
+    # DAY HEADER ROW
     # ════════════════════════════════════════
     hy = y - HDR_H
     c.setFillColor(SLATE)
@@ -290,22 +291,19 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
         c.setFillColor(BLUE)
         c.rect(x, hy, DAY_W, HDR_H, fill=1, stroke=1)
         c.setFillColor(WHITE)
-        # Day name (upper)
         c.setFont(FONT_B, 10)
         c.drawCentredString(x+DAY_W/2, hy+HDR_H*0.58, H(day))
-        # Date (lower, smaller)
         c.setFont(FONT, 7.5)
         c.drawCentredString(x+DAY_W/2, hy+HDR_H*0.15, fmt_date(week_dates[i]))
     y = hy
 
     # ════════════════════════════════════════
-    # SHIFT ROWS — colored by shift type, not day
+    # SHIFT ROWS
     # ════════════════════════════════════════
     for shift in SHIFTS_LOCAL:
         ry = y - SHIFT_H
         bg_light = SH_LIGHT[shift]
 
-        # Shift label cell
         c.setFillColor(SLATE)
         c.rect(MX, ry, LBL_W, SHIFT_H, fill=1, stroke=1)
         c.setFillColor(WHITE); c.setFont(FONT_B, 10)
@@ -315,9 +313,8 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
 
         for di, day in enumerate(DAYS):
             x   = MX + LBL_W + di*DAY_W
-            emp = sched[day].get(shift)   # .get() handles days with fewer shifts (mixed mode)
+            emp = sched[day].get(shift)
 
-            # If this day is in 2x12 mode and this is the noon shift → draw neutral gray block
             day_eff = day_modes.get(day, shift_mode)
             if day_eff == '2x12' and shift == 'צהריים':
                 c.setFillColor(SKIP_BG)
@@ -335,7 +332,6 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
             if emp:
                 c.setFillColor(GREEN_TXT); c.setFont(FONT_B, 9)
                 c.drawCentredString(x+DAY_W/2, ry+SHIFT_H*0.62, H(emp))
-                # edit underline
                 c.setStrokeColor(colors.HexColor('#c6f6d5'))
                 c.setLineWidth(0.5)
                 c.line(x+0.2*cm, ry+SHIFT_H*0.3, x+DAY_W-0.2*cm, ry+SHIFT_H*0.3)
@@ -348,10 +344,9 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
         y = ry
 
     # ════════════════════════════════════════
-    # AVAILABILITY TABLE  (manager only)
+    # AVAILABILITY TABLE (manager only)
     # ════════════════════════════════════════
     if mode == 'employee':
-        c.save()
         return
 
     y -= 0.3*cm
@@ -359,7 +354,6 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
     c.drawString(MX, y-0.27*cm, H('זמינות עובדים:'))
     y -= 0.43*cm
 
-    # Header row
     c.setFillColor(SLATE)
     c.rect(MX, y-AV_HDR_H, LBL_W, AV_HDR_H, fill=1, stroke=1)
     c.setFillColor(WHITE); c.setFont(FONT, 7)
@@ -373,25 +367,21 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
         c.drawCentredString(x+DAY_W/2, y-AV_HDR_H*0.58, H(day))
     y -= AV_HDR_H
 
-    # Employee rows
     for emp in sorted(avail.keys()):
         ry         = y - AV_ROW_H
         total_h    = hrs.get(emp, 0)
         n_nights   = night_hrs.get(emp, 0) // (12 if shift_mode == '2x12' else 8)
         emp_prefs  = prefs.get(emp, {})
 
-        # Name + stats cell
         c.setFillColor(AVAIL_BG)
         c.rect(MX, ry, LBL_W, AV_ROW_H, fill=1, stroke=1)
         c.setFillColor(SLATE); c.setFont(FONT, 7.5)
         c.drawString(MX+0.15*cm, ry+AV_ROW_H*0.52, H(emp))
 
-        # hours + night count
         stats = f'{total_h}h | {n_nights}🌙'
         c.setFillColor(GRAY_TXT); c.setFont(FONT, 6.5)
         c.drawString(MX+0.15*cm, ry+AV_ROW_H*0.1, stats)
 
-        # Preference tag if any
         if emp_prefs:
             pref_shifts = [s for s in SHIFTS_LOCAL if emp_prefs.get(s, 1) > 1]
             tag = 'מעדיף: ' + ', '.join(pref_shifts)
@@ -399,7 +389,6 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
             tag_x = MX + LBL_W - 0.15*cm
             c.drawRightString(tag_x, ry+AV_ROW_H*0.65, H(tag))
 
-        # Day cells
         for di, day in enumerate(DAYS):
             x          = MX + LBL_W + di*DAY_W
             day_shifts = avail[emp].get(day, [])
@@ -445,16 +434,14 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
     for ei, emp in enumerate(sorted(avail.keys())):
         n = night_hrs.get(emp, 0) // (12 if shift_mode == '2x12' else 8)
         ex = bar_x + ei * emp_col_w
-        # bar background
         c.setFillColor(colors.HexColor('#ebf8ff'))
         c.rect(ex, bar_y, emp_col_w*0.9, bar_h, fill=1, stroke=1)
-        # filled portion
         if max_n > 0:
             fill_w = emp_col_w * 0.9 * (n / max_n)
             c.setFillColor(SH_MED['לילה'])
             c.rect(ex, bar_y, fill_w, bar_h, fill=1, stroke=0)
         c.setFillColor(SLATE); c.setFont(FONT, 6)
-        label = H(emp.split()[0]) if ' ' in emp else H(emp)  # first name only
+        label = H(emp.split()[0]) if ' ' in emp else H(emp)
         c.drawCentredString(ex + emp_col_w*0.45, bar_y + bar_h*0.3, f'{label} ({n})')
 
     # ════════════════════════════════════════
@@ -475,6 +462,27 @@ def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', 
         H('* עיגול עם מסגרת = שיבוץ אוטומטי  |  אדום = אין כיסוי  |  '
           'מצב חריג: 2 משמרות 12ש  06:00-18:00 / 18:00-06:00'))
 
+
+def make_pdf(sched, avail, hrs, night_hrs, prefs, week, output, mode='manager', shift_mode='3x8', day_modes=None):
+    """Single-station PDF (backwards compat)."""
+    day_modes = day_modes or {}
+    c = canvas.Canvas(output, pagesize=landscape(A4))
+    _draw_station_page(c, sched, avail, hrs, night_hrs, prefs, week, mode, shift_mode, day_modes)
+    c.save()
+
+
+def make_pdf_stations(stations_list, avail_map, hrs_map, nh_map, prefs, week, output, mode='manager', shift_mode='3x8', day_modes=None):
+    """Multi-station PDF — one page per station."""
+    day_modes = day_modes or {}
+    PW, PH = landscape(A4)
+    c = canvas.Canvas(output, pagesize=landscape(A4))
+    for i, (station_name, sched) in enumerate(stations_list):
+        if i > 0:
+            c.showPage()
+        avail = avail_map.get(station_name, {})
+        hrs = hrs_map.get(station_name, {})
+        nh = nh_map.get(station_name, {})
+        _draw_station_page(c, sched, avail, hrs, nh, prefs, week, mode, shift_mode, day_modes, station_name, PW, PH)
     c.save()
 
 
