@@ -4,7 +4,7 @@
 מחולל סידור עבודה — שרת אינטרנט (multi-team)
 """
 
-import os, sys, json, socket, hashlib
+import os, sys, json, socket, hashlib, traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote_plus, quote_plus
 from datetime import datetime, timedelta
@@ -1063,7 +1063,10 @@ modes.forEach((m,i)=>setDayMode(i,m));
 # HTTP HANDLER
 # ══════════════════════════════════════════════════════════════
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args): pass
+    def log_message(self, fmt, *args): pass  # suppress normal access logs
+    def log_error(self, fmt, *args):
+        sys.stderr.write('[ERROR] ' + (fmt % args) + '\n')
+        sys.stderr.flush()
 
     def send_html(self, html, code=200):
         enc = html.encode('utf-8')
@@ -1127,6 +1130,24 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        try:
+            self._do_GET_inner()
+        except Exception as e:
+            tb = traceback.format_exc()
+            sys.stderr.write('[CRASH do_GET] ' + tb + '\n')
+            sys.stderr.flush()
+            try:
+                self.send_html(
+                    '<html dir="rtl"><body style="font-family:sans-serif;padding:30px">'
+                    '<h2 style="color:red">&#9888; שגיאת שרת</h2>'
+                    '<pre style="background:#f8f8f8;padding:16px;border-radius:8px;'
+                    'font-size:12px;direction:ltr;text-align:left;overflow:auto">'
+                    + tb.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+                    + '</pre></body></html>', 500)
+            except Exception:
+                pass
+
+    def _do_GET_inner(self):
         parsed = urlparse(self.path)
         path   = parsed.path.rstrip('/')
         qs     = parse_qs(parsed.query)
@@ -1269,6 +1290,24 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
             self.send_html('<h1 style="font-family:sans-serif">404</h1>', 404)
 
     def do_POST(self):
+        try:
+            self._do_POST_inner()
+        except Exception as e:
+            tb = traceback.format_exc()
+            sys.stderr.write('[CRASH do_POST] ' + tb + '\n')
+            sys.stderr.flush()
+            try:
+                self.send_html(
+                    '<html dir="rtl"><body style="font-family:sans-serif;padding:30px">'
+                    '<h2 style="color:red">&#9888; שגיאת שרת</h2>'
+                    '<pre style="background:#f8f8f8;padding:16px;border-radius:8px;'
+                    'font-size:12px;direction:ltr;text-align:left;overflow:auto">'
+                    + tb.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+                    + '</pre></body></html>', 500)
+            except Exception:
+                pass
+
+    def _do_POST_inner(self):
         parsed = urlparse(self.path)
         path   = parsed.path.rstrip('/')
         qs     = parse_qs(parsed.query)
@@ -1424,6 +1463,7 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
             station_schedules = {}
             all_hrs = {}
             all_nh = {}
+            all_avail = {}
 
             for st_idx, station in enumerate(stations):
                 sched = {d: {} for d in DAYS}
@@ -1437,21 +1477,22 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
 
                 station_schedules[station] = sched
 
-                # Recalculate hours for this station
+                # Recalculate hours for this station (include manually-added employees too)
                 station_subs = get_station_subs(data, station)
                 avail = {n: sub_to_avail(s) for n, s in station_subs.items()}
-                hrs = {emp: 0 for emp in avail}
-                nh = {emp: 0 for emp in avail}
+                hrs = {}
+                nh = {}
                 for day in DAYS:
                     dm = day_modes[day]
                     h_map = {'בוקר': 12, 'לילה': 12} if dm == '2x12' else {'בוקר': 8, 'צהריים': 8, 'לילה': 8}
                     for sh, emp in sched[day].items():
-                        if emp and emp in hrs:
+                        if emp:
                             hrs[emp] = hrs.get(emp, 0) + h_map.get(sh, 8)
                             if sh == 'לילה':
                                 nh[emp] = nh.get(emp, 0) + h_map.get(sh, 8)
                 all_hrs[station] = hrs
                 all_nh[station] = nh
+                all_avail[station] = avail
 
             data['station_schedules'] = station_schedules
             data['last_schedule'] = station_schedules.get(stations[0], {})
@@ -1470,9 +1511,9 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
                     stations_list_m = [(st, station_schedules[st]) for st in stations]
                     stations_list_e = [(st, station_schedules[st]) for st in stations]
 
-                    make_pdf_stations(stations_list_m, all_hrs, all_hrs, all_nh, prefs, wk_fmt, out_m,
+                    make_pdf_stations(stations_list_m, all_avail, all_hrs, all_nh, prefs, wk_fmt, out_m,
                                     mode='manager', shift_mode=shift_mode, day_modes=day_modes)
-                    make_pdf_stations(stations_list_e, all_hrs, all_hrs, all_nh, prefs, wk_fmt, out_e,
+                    make_pdf_stations(stations_list_e, all_avail, all_hrs, all_nh, prefs, wk_fmt, out_e,
                                     mode='employee', shift_mode=shift_mode, day_modes=day_modes)
                 except Exception as e:
                     self.redirect('/admin?team=' + quote_plus(team) + '&msg=שגיאה+ביצירת+PDF'); return
