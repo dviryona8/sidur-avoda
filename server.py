@@ -818,9 +818,13 @@ def schedule_edit_page(team, data):
             field  = f'sched__{day}__{sh}'
             cell_id = f'cell_{i}_noon' if sh == 'צהריים' else ''
             id_attr = f' id="{cell_id}"' if cell_id else ''
-            # Initial display: hide noon cell for 2x12 days
-            hide = ';display:none' if (sh == 'צהריים' and eff_mode[day] == '2x12') else ''
-            cells += (f'<td{id_attr} style="padding:6px 4px;background:{bg};border:1px solid #e2e8f0{hide}">'
+            # Initial display: for 2x12 days use visibility:hidden (NOT display:none)
+            # so column alignment stays intact in RTL table layout.
+            if sh == 'צהריים' and eff_mode[day] == '2x12':
+                vis_style = ';visibility:hidden;background:#e2e8f0'
+            else:
+                vis_style = ''
+            cells += (f'<td{id_attr} style="padding:6px 4px;background:{bg};border:1px solid #e2e8f0{vis_style}">'
                       f'<select name="{field}" '
                       f'style="width:100%;padding:5px 4px;border:1.5px solid {border_col};'
                       f'border-radius:6px;font-size:12px;font-family:inherit;direction:rtl;'
@@ -897,13 +901,18 @@ function setDayMode(i, mode){
   document.getElementById('daymode_'+i).value=mode;
 
   // Toggle button styles
-  const on='background:#276749', off='background:rgba(100,140,200,.35)';
   document.getElementById('btn3x8_'+i).style.background  = mode==='3x8'  ? '#276749' : 'rgba(100,140,200,.35)';
   document.getElementById('btn2x12_'+i).style.background = mode==='2x12' ? '#276749' : 'rgba(100,140,200,.35)';
 
-  // Show/hide noon cell for this column
+  // Use visibility:hidden (NOT display:none) so the table column structure
+  // stays intact and RTL alignment doesn't shift the other columns.
   const noon=document.getElementById('cell_'+i+'_noon');
-  if(noon) noon.style.display = mode==='2x12' ? 'none' : '';
+  if(noon){
+    noon.style.visibility = mode==='2x12' ? 'hidden' : 'visible';
+    noon.style.background = mode==='2x12' ? '#e2e8f0' : '#fffbeb';
+    const sel=noon.querySelector('select');
+    if(sel) sel.disabled = (mode==='2x12');
+  }
 }
 // Apply initial state on load (already set server-side but run JS for consistency)
 modes.forEach((m,i)=>setDayMode(i,m));
