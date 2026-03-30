@@ -32,10 +32,26 @@ MIN_NIGHT = 2
 MIN_WKND  = 2
 
 # ── data helpers ───────────────────────────────────────────────
+def _clean_str(s):
+    """Remove lone surrogates from strings (caused by malformed emoji on some devices)."""
+    if not isinstance(s, str): return s
+    return s.encode('utf-8', errors='replace').decode('utf-8')
+
+def _clean_obj(obj):
+    """Recursively sanitize all strings in a dict/list."""
+    if isinstance(obj, dict):
+        return {_clean_str(k): _clean_obj(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_clean_obj(i) for i in obj]
+    if isinstance(obj, str):
+        return _clean_str(obj)
+    return obj
+
 def load_all():
     if os.path.exists(DATA_F):
-        with open(DATA_F, encoding='utf-8') as f:
+        with open(DATA_F, encoding='utf-8', errors='replace') as f:
             d = json.load(f)
+        d = _clean_obj(d)
         if 'teams' not in d:
             d = {'teams': {'כללי': d}}
         return d
