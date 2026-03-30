@@ -759,61 +759,89 @@ def schedule_edit_page(team, data):
     sched      = data.get('last_schedule', {})
     subs       = data.get('submissions', {})
     wk         = data.get('week_start', '')
-    shift_mode = data.get('shift_mode', '3x8')
+    shift_mode = data.get('shift_mode', '3x8')   # global default
+    day_modes  = data.get('day_modes', {})        # per-day overrides
     wl         = week_label(wk)
     dates      = week_dates_json(wk)
 
-    if shift_mode == '2x12':
-        shifts_list = ['בוקר', 'לילה']
-        hrs_map = {'בוקר': '06:00–18:00', 'לילה': '18:00–06:00'}
-    else:
-        shifts_list = ['בוקר', 'צהריים', 'לילה']
-        hrs_map = {'בוקר': '06:00–14:00', 'צהריים': '14:00–22:00', 'לילה': '22:00–06:00'}
+    # Resolve effective mode per day
+    eff_mode = {day: day_modes.get(day, shift_mode) for day in DAYS}
 
     shift_colors = {'בוקר': '#f0fff4', 'צהריים': '#fffbeb', 'לילה': '#ebf4ff'}
     shift_border = {'בוקר': '#48bb78', 'צהריים': '#d69e2e', 'לילה': '#4299e1'}
+    hrs_3x8 = {'בוקר': '06:00–14:00', 'צהריים': '14:00–22:00', 'לילה': '22:00–06:00'}
 
-    # Build employee list per shift per day
     all_employees = sorted(subs.keys())
     avail_map = {n: sub_to_avail(s) for n, s in subs.items()}
 
-    # Build the table rows
+    # ── Build day header row (name + date) ──────────────────────────
+    day_name_cells = '<th style="background:#1a365d;color:white;padding:9px 6px;width:90px;font-size:11px;vertical-align:middle">משמרת</th>'
+    day_toggle_cells = '<td style="background:#263554;padding:4px 6px;font-size:10px;color:rgba(255,255,255,.6)">מצב יום:</td>'
+
+    for i, day in enumerate(DAYS):
+        date_str = (f'<span style="display:block;font-size:10px;background:rgba(255,255,255,.22);'
+                    f'border-radius:4px;padding:1px 5px;margin-top:3px">{dates[i]}</span>') if dates[i] else ''
+        day_name_cells += (f'<th style="background:#2b6cb0;color:white;padding:8px 4px;'
+                           f'font-size:12px;text-align:center;border:1px solid #1a365d">'
+                           f'{day}{date_str}</th>')
+
+        m = eff_mode[day]
+        active3 = 'background:#276749' if m == '3x8'  else 'background:rgba(255,255,255,.18)'
+        active2 = 'background:#276749' if m == '2x12' else 'background:rgba(255,255,255,.18)'
+        day_toggle_cells += (
+            f'<td style="background:#2b6cb0;padding:5px 4px;border:1px solid #1a365d;text-align:center">'
+            f'<div style="display:flex;gap:3px;justify-content:center;align-items:center">'
+            f'<button type="button" id="btn3x8_{i}" onclick="setDayMode({i},\'3x8\')" '
+            f'style="{active3};color:white;border:none;border-radius:4px;'
+            f'font-size:10px;font-weight:700;padding:3px 7px;cursor:pointer;font-family:inherit">3×8</button>'
+            f'<button type="button" id="btn2x12_{i}" onclick="setDayMode({i},\'2x12\')" '
+            f'style="{active2};color:white;border:none;border-radius:4px;'
+            f'font-size:10px;font-weight:700;padding:3px 7px;cursor:pointer;font-family:inherit">2×12</button>'
+            f'<input type="hidden" name="daymode__{day}" id="daymode_{i}" value="{m}">'
+            f'</div></td>'
+        )
+
+    # ── Build 3 shift rows (always all 3; noon hidden by JS for 2x12 days) ──
     table_rows = ''
-    for sh in shifts_list:
-        bg = shift_colors.get(sh, '#f7fafc')
-        border_col = shift_border.get(sh, '#e2e8f0')
+    for sh in ['בוקר', 'צהריים', 'לילה']:
+        bg         = shift_colors[sh]
+        border_col = shift_border[sh]
         cells = ''
         for i, day in enumerate(DAYS):
-            current = sched.get(day, {}).get(sh, '') or ''
-            # employees available for this shift on this day
+            current    = sched.get(day, {}).get(sh, '') or ''
             avail_emps = [e for e in all_employees if sh in avail_map.get(e, {}).get(day, [])]
-            # build select options
             opts = '<option value="">— לא שובץ —</option>'
             for e in all_employees:
-                sel = 'selected' if e == current else ''
+                sel        = 'selected' if e == current else ''
                 avail_note = '' if e in avail_emps else ' ⚠'
                 opts += f'<option value="{e}" {sel}>{e}{avail_note}</option>'
-            field_name = f'sched__{day}__{sh}'
-            cells += (f'<td style="padding:6px 4px;background:{bg};border:1px solid #e2e8f0">'
-                      f'<select name="{field_name}" '
+            field  = f'sched__{day}__{sh}'
+            cell_id = f'cell_{i}_noon' if sh == 'צהריים' else ''
+            id_attr = f' id="{cell_id}"' if cell_id else ''
+            # Initial display: hide noon cell for 2x12 days
+            hide = ';display:none' if (sh == 'צהריים' and eff_mode[day] == '2x12') else ''
+            cells += (f'<td{id_attr} style="padding:6px 4px;background:{bg};border:1px solid #e2e8f0{hide}">'
+                      f'<select name="{field}" '
                       f'style="width:100%;padding:5px 4px;border:1.5px solid {border_col};'
                       f'border-radius:6px;font-size:12px;font-family:inherit;direction:rtl;'
-                      f'background:white;cursor:pointer">'
-                      f'{opts}</select></td>')
-        table_rows += (f'<tr>'
-                       f'<td style="background:#2d3748;color:white;text-align:center;'
+                      f'background:white;cursor:pointer">{opts}</select></td>')
+
+        # Row label – for בוקר/לילה show both possible hour ranges; noon shows 3x8 only
+        if sh == 'בוקר':
+            hrs_label = '<span id="lbl-boker" style="display:block;font-size:9px;opacity:.65">06:00–14:00</span>'
+        elif sh == 'צהריים':
+            hrs_label = '<span style="display:block;font-size:9px;opacity:.65">14:00–22:00</span>'
+        else:  # לילה
+            hrs_label = '<span id="lbl-layla" style="display:block;font-size:9px;opacity:.65">22:00–06:00</span>'
+
+        table_rows += (f'<tr><td style="background:#2d3748;color:white;text-align:center;'
                        f'padding:8px 4px;font-size:12px;font-weight:700;white-space:nowrap">'
-                       f'{sh}<span style="display:block;font-size:9px;opacity:.7">{hrs_map.get(sh,"")}</span></td>'
-                       + cells + '</tr>')
+                       f'{sh}{hrs_label}</td>' + cells + '</tr>')
 
-    # Build day headers
-    day_headers = ''
-    for i, day in enumerate(DAYS):
-        date_str = (' <span style="font-size:10px;background:rgba(255,255,255,.25);'
-                    'border-radius:4px;padding:1px 5px">' + dates[i] + '</span>') if dates[i] else ''
-        day_headers += f'<th style="background:#2b6cb0;color:white;padding:9px 4px;font-size:12px;text-align:center;border:1px solid #1a365d">{day}{date_str}</th>'
+    # JS: initial modes array
+    init_modes = json.dumps([eff_mode[d] for d in DAYS])
 
-    return '''<!DOCTYPE html>
+    return ('''<!DOCTYPE html>
 <html dir="rtl" lang="he"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>עריכת סידור — ''' + team + '''</title>
@@ -823,15 +851,14 @@ body{font-family:"Segoe UI",Arial,sans-serif;background:#edf2f7;color:#2d3748;di
 .hdr{background:linear-gradient(135deg,#1a365d,#2c5282);color:white;padding:14px 20px;
      display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
 .hdr h1{font-size:17px}.hdr a{color:white;font-size:13px;text-decoration:none;opacity:.85}
-.con{max-width:1200px;margin:0 auto;padding:20px 16px}
+.con{max-width:1300px;margin:0 auto;padding:20px 16px}
 .card{background:white;border-radius:14px;padding:20px;margin-bottom:18px;box-shadow:0 2px 10px rgba(0,0,0,.07)}
 .btn{display:inline-block;padding:11px 22px;border:none;border-radius:8px;font-size:14px;
      font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none;transition:.15s}
 .btn-green{background:#276749;color:white}.btn-green:hover{background:#22543d}
-.btn-blue{background:#2b6cb0;color:white}.btn-blue:hover{background:#2c5282}
 .btn-gray{background:#e2e8f0;color:#2d3748}.btn-gray:hover{background:#cbd5e0}
 .tbl-wrap{overflow-x:auto}
-table{width:100%;border-collapse:collapse;min-width:700px}
+table{border-collapse:collapse;min-width:780px;width:100%}
 </style></head>
 <body>
 <div class="hdr">
@@ -840,29 +867,48 @@ table{width:100%;border-collapse:collapse;min-width:700px}
 </div>
 <div class="con">
 <div class="card">
-  <p style="font-size:14px;color:#4a5568;margin-bottom:16px">
-    &#128203; עיין בסידור שנוצר אוטומטית ובצע שינויים לפי הצורך. לחץ <strong>שמור וצור PDF</strong> לסיום.
-    <br><span style="font-size:12px;color:#718096">⚠ = עובד לא סימן זמינות למשמרת זו</span>
+  <p style="font-size:13px;color:#4a5568;margin-bottom:14px">
+    &#128203; ערוך שיבוצים לפי הצורך. לכל יום ניתן לבחור מצב <strong>3×8</strong> (3 משמרות של 8 שעות) או <strong>2×12</strong> (2 משמרות של 12 שעות).
+    <span style="margin-right:12px;color:#718096">⚠ = עובד לא סימן זמינות</span>
   </p>
-
   <form method="POST" action="/admin/schedule/save?team=''' + quote_plus(team) + '''">
     <div class="tbl-wrap">
     <table>
-      <thead><tr>
-        <th style="background:#1a365d;color:white;padding:9px 6px;width:85px;font-size:11px">משמרת</th>
-        ''' + day_headers + '''
-      </tr></thead>
+      <thead>
+        <tr>''' + day_name_cells + '''</tr>
+        <tr>''' + day_toggle_cells + '''</tr>
+      </thead>
       <tbody>''' + table_rows + '''</tbody>
     </table>
     </div>
-
     <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap">
       <button type="submit" class="btn btn-green">&#128196; שמור וצור PDF</button>
       <a href="/admin?team=''' + quote_plus(team) + '''" class="btn btn-gray">&#8592; חזרה ללא שמירה</a>
     </div>
   </form>
 </div>
-</div></body></html>'''
+</div>
+<script>
+const N=7;
+let modes=''' + init_modes + ''';
+
+function setDayMode(i, mode){
+  modes[i]=mode;
+  document.getElementById('daymode_'+i).value=mode;
+
+  // Toggle button styles
+  const on='background:#276749', off='background:rgba(100,140,200,.35)';
+  document.getElementById('btn3x8_'+i).style.background  = mode==='3x8'  ? '#276749' : 'rgba(100,140,200,.35)';
+  document.getElementById('btn2x12_'+i).style.background = mode==='2x12' ? '#276749' : 'rgba(100,140,200,.35)';
+
+  // Show/hide noon cell for this column
+  const noon=document.getElementById('cell_'+i+'_noon');
+  if(noon) noon.style.display = mode==='2x12' ? 'none' : '';
+}
+// Apply initial state on load (already set server-side but run JS for consistency)
+modes.forEach((m,i)=>setDayMode(i,m));
+</script>
+</body></html>''')
 
 # ══════════════════════════════════════════════════════════════
 # HTTP HANDLER
@@ -1160,32 +1206,41 @@ h2{color:#276749;margin-bottom:8px}p{color:#718096;font-size:14px;margin-bottom:
             avail = {n: sub_to_avail(s) for n, s in subs.items()}
             prefs = parse_preferences(data.get('preferences', ''))
 
-            # Rebuild schedule from form fields
-            sched = {d: {} for d in DAYS}
-            if shift_mode == '2x12':
-                shifts_list = ['בוקר', 'לילה']
-            else:
-                shifts_list = ['בוקר', 'צהריים', 'לילה']
+            # Read per-day modes from form (daymode__{day})
+            day_modes = {}
             for day in DAYS:
-                for sh in shifts_list:
+                field = f'daymode__{day}'
+                val = params.get(field, [shift_mode])[0].strip()
+                day_modes[day] = val if val in ('3x8', '2x12') else shift_mode
+
+            # Rebuild schedule from form fields, respecting per-day mode
+            sched = {d: {} for d in DAYS}
+            for day in DAYS:
+                dm = day_modes[day]
+                day_shifts = ['בוקר', 'לילה'] if dm == '2x12' else ['בוקר', 'צהריים', 'לילה']
+                for sh in day_shifts:
                     field = f'sched__{day}__{sh}'
                     val = params.get(field, [''])[0].strip()
                     sched[day][sh] = val if val else None
 
             data['last_schedule'] = sched
-            # Recalculate hours
+            data['day_modes'] = day_modes
+
+            # Recalculate hours per employee based on per-day mode
             hrs = {emp: 0 for emp in avail}
             nh  = {emp: 0 for emp in avail}
-            shift_hrs_map = {'בוקר': 12, 'לילה': 12} if shift_mode == '2x12' else {'בוקר': 8, 'צהריים': 8, 'לילה': 8}
             for day in DAYS:
+                dm = day_modes[day]
+                h_map = {'בוקר': 12, 'לילה': 12} if dm == '2x12' else {'בוקר': 8, 'צהריים': 8, 'לילה': 8}
                 for sh, emp in sched[day].items():
                     if emp and emp in hrs:
-                        hrs[emp] = hrs.get(emp, 0) + shift_hrs_map.get(sh, 8)
+                        hrs[emp] = hrs.get(emp, 0) + h_map.get(sh, 8)
                         if sh == 'לילה':
-                            nh[emp] = nh.get(emp, 0) + shift_hrs_map.get(sh, 8)
+                            nh[emp] = nh.get(emp, 0) + h_map.get(sh, 8)
             save_team(team, data)
 
-            # Generate PDFs
+            # Generate PDFs — use global shift_mode for PDF layout
+            # (mixed-mode days will still display correctly as PDF uses sched dict)
             if PDF_OK and wk:
                 try:
                     wk_fmt = _normalize_wk(wk)
